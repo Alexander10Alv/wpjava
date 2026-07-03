@@ -10,7 +10,7 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 
 const SESSIONS_DIR = process.env.SESSIONS_DIR || './sessions';
-const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '5', 10);
+const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '21', 10);
 
 const sessions = new Map();
 

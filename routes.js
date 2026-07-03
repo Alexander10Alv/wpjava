@@ -16,7 +16,7 @@ router.post('/link', async (req, res) => {
     res.json({ userId, message: 'Sesion creada.' });
   } catch (err) {
     if (err.message === 'LIMIT_REACHED') {
-      return res.status(503).json({ error: 'Servidor al limite' });
+      return res.status(503).json({ error: 'La aplicacion esta en modo beta y ya alcanzo el limite de usuarios registrados. Intenta mas tarde.' });
     }
     console.error(err);
     res.status(500).json({ error: 'No se pudo iniciar la sesion' });
@@ -137,15 +137,22 @@ router.get('/presence/:userId/:chatId', auth, async (req, res) => {
 router.get('/media/:userId/:messageId', auth, async (req, res) => {
   const session = getSession(req.params.userId);
   const { chatId } = req.query;
+  console.log('[media] Request - userId:', req.params.userId, 'messageId:', req.params.messageId, 'chatId:', chatId);
+  
   if (!chatId) return res.status(400).json({ error: 'Falta chatId' });
 
   try {
     const { downloadMediaMessage } = require('@whiskeysockets/baileys');
     const messages = session.messages.get(chatId) || [];
+    console.log('[media] Total messages in chat:', messages.length);
+    
     const msg = messages.find(m => m.id === req.params.messageId);
+    console.log('[media] Message found:', !!msg, 'has raw:', !!msg?.raw, 'type:', msg?.type);
+    
     if (!msg || !msg.raw) return res.status(404).json({ error: 'Mensaje no encontrado' });
 
     const isAudio = msg.type === 'audio';
+    console.log('[media] isAudio:', isAudio);
 
     if (isAudio) {
       const fspath = require('path');
@@ -158,6 +165,7 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
 
       // Si ya tenemos el AMR en disco, servirlo directo
       if (fs.existsSync(amrPath)) {
+        console.log('[media] Sirviendo AMR cacheado');
         buffer = fs.readFileSync(amrPath);
         const base64 = buffer.toString('base64');
         return res.json({ data: 'data:audio/amr;base64,' + base64, type: 'audio' });
@@ -165,7 +173,9 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
 
       // Descargar OGG original
       if (!fs.existsSync(oggPath)) {
+        console.log('[media] Descargando audio original...');
         buffer = await downloadMediaMessage(msg.raw, 'buffer', {});
+        console.log('[media] Audio descargado, size:', buffer.length, 'bytes');
         if (buffer.length > 300 * 1024) return res.json({ error: 'Audio muy grande', tooLarge: true });
         fs.mkdirSync(mediaDir, { recursive: true });
         fs.writeFileSync(oggPath, buffer);
@@ -173,15 +183,17 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
 
       // Intentar convertir OGG -> AMR-NB con ffmpeg
       try {
+        console.log('[media] Intentando conversion ffmpeg...');
         const { execSync } = require('child_process');
         execSync(`ffmpeg -y -i "${oggPath}" -ar 8000 -ac 1 -ab 12800 "${amrPath}"`, { timeout: 15000 });
         buffer = fs.readFileSync(amrPath);
+        console.log('[media] Conversion exitosa, AMR size:', buffer.length, 'bytes');
         if (buffer.length > 300 * 1024) return res.json({ error: 'Audio muy grande', tooLarge: true });
         const base64 = buffer.toString('base64');
         return res.json({ data: 'data:audio/amr;base64,' + base64, type: 'audio' });
       } catch (ffmpegErr) {
         // ffmpeg no disponible, enviar OGG original
-        console.log('[audio] ffmpeg no disponible, enviando OGG original');
+        console.log('[media] ffmpeg no disponible, enviando OGG original');
         buffer = fs.readFileSync(oggPath);
         if (buffer.length > 300 * 1024) return res.json({ error: 'Audio muy grande', tooLarge: true });
         const base64 = buffer.toString('base64');
@@ -190,6 +202,7 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
     }
 
     // Imagen
+    console.log('[media] Procesando imagen...');
     let buffer = await downloadMediaMessage(msg.raw, 'buffer', {});
     try {
       const sharp = require('sharp');
@@ -202,7 +215,7 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
     const base64 = buffer.toString('base64');
     res.json({ data: 'data:image/jpeg;base64,' + base64, type: 'image' });
   } catch (err) {
-    console.error(err);
+    console.error('[media] Error:', err);
     res.status(500).json({ error: 'No se pudo descargar el media' });
   }
 });
