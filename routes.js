@@ -181,16 +181,17 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
         fs.writeFileSync(oggPath, buffer);
       }
 
-      // Intentar convertir OGG -> AMR-NB con ffmpeg
+      // Intentar convertir OGG -> MP3 con ffmpeg (más compatible que AMR)
       try {
         console.log('[media] Intentando conversion ffmpeg...');
         const { execSync } = require('child_process');
-        execSync(`ffmpeg -y -i "${oggPath}" -ar 8000 -ac 1 -ab 12800 "${amrPath}"`, { timeout: 15000 });
-        buffer = fs.readFileSync(amrPath);
-        console.log('[media] Conversion exitosa, AMR size:', buffer.length, 'bytes');
+        const mp3Path = fspath.join(mediaDir, req.params.messageId + '.mp3');
+        execSync(`ffmpeg -y -i "${oggPath}" -ar 22050 -ac 1 -b:a 32k "${mp3Path}"`, { timeout: 15000 });
+        buffer = fs.readFileSync(mp3Path);
+        console.log('[media] Conversion exitosa, MP3 size:', buffer.length, 'bytes');
         if (buffer.length > 300 * 1024) return res.json({ error: 'Audio muy grande', tooLarge: true });
         const base64 = buffer.toString('base64');
-        return res.json({ data: 'data:audio/amr;base64,' + base64, type: 'audio' });
+        return res.json({ data: 'data:audio/mpeg;base64,' + base64, type: 'audio' });
       } catch (ffmpegErr) {
         // ffmpeg no disponible, enviar OGG original
         console.log('[media] ffmpeg no disponible, enviando OGG original');
