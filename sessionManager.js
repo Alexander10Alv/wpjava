@@ -174,13 +174,16 @@ async function createSession(userId) {
 
   // Capturar contactos de la agenda cuando Baileys los sincroniza
   sock.ev.on('contacts.upsert', (contacts) => {
+    console.log(`[contacts] Recibidos ${contacts.length} contactos`);
     for (const c of contacts) {
       if (c.id) {
+        console.log(`[contacts] ID: ${c.id}, name: ${c.name}, notify: ${c.notify}`);
         entry.contacts[c.id] = c;
         // Actualizar nombre del chat si existe
         if (entry.chats.has(c.id)) {
           const chat = entry.chats.get(c.id);
           const newName = c.name || c.notify || chat.name;
+          console.log(`[contacts] Actualizando chat ${c.id}: "${chat.name}" -> "${newName}"`);
           if (newName && newName !== chat.name) {
             chat.name = newName;
             saveChatsCache(userId, entry.chats, entry.messages);
