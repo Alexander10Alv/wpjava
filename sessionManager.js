@@ -60,9 +60,9 @@ function saveChatsCache(userId, chats, messages) {
     const chatsObj = {};
     for (const [id, c] of chats.entries()) chatsObj[id] = c;
     fs.writeFileSync(path.join(dir, 'chats_cache.json'), JSON.stringify(chatsObj));
-    // Guardar solo los ultimos 20 mensajes por chat para no llenar disco
+    // Guardar solo los ultimos 10 mensajes por chat para reducir uso de RAM
     const msgsObj = {};
-    for (const [id, msgs] of messages.entries()) msgsObj[id] = msgs.slice(-20).map(({ raw, ...m }) => m);
+    for (const [id, msgs] of messages.entries()) msgsObj[id] = msgs.slice(-10).map(({ raw, ...m }) => m);
     fs.writeFileSync(path.join(dir, 'messages_cache.json'), JSON.stringify(msgsObj));
   } catch (_) {}
 }
@@ -283,6 +283,11 @@ async function createSession(userId) {
         msgEntry.duration = msg.message.audioMessage.seconds || 0;
       }
       existing.push(msgEntry);
+      
+      // Limitar a 10 mensajes por chat en RAM para evitar OOM
+      if (existing.length > 10) {
+        existing.shift(); // Eliminar el más antiguo
+      }
 
       const name = resolveName(chatId) || msg.pushName ||
                    entry.chats.get(chatId)?.name || cleanId(chatId);
@@ -292,8 +297,13 @@ async function createSession(userId) {
       const prevUnread = prevChat.unreadCount || 0;
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
+      // Si no hay nombre guardado y viene pushName, usarlo
+      const finalName = prevChat.name && prevChat.name !== cleanId(chatId) 
+        ? prevChat.name 
+        : (name || cleanId(chatId));
+
       entry.chats.set(chatId, {
-        name,
+        name: finalName,
         lastMessage: isImage ? '[imagen]' : isAudio ? '[audio]' : (text || ''),
         lastTimestamp: msg.messageTimestamp,
         unreadCount: newUnread,
