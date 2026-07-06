@@ -175,7 +175,18 @@ async function createSession(userId) {
   // Capturar contactos de la agenda cuando Baileys los sincroniza
   sock.ev.on('contacts.upsert', (contacts) => {
     for (const c of contacts) {
-      if (c.id) entry.contacts[c.id] = c;
+      if (c.id) {
+        entry.contacts[c.id] = c;
+        // Actualizar nombre del chat si existe
+        if (entry.chats.has(c.id)) {
+          const chat = entry.chats.get(c.id);
+          const newName = c.name || c.notify || chat.name;
+          if (newName && newName !== chat.name) {
+            chat.name = newName;
+            saveChatsCache(userId, entry.chats, entry.messages);
+          }
+        }
+      }
     }
   });
 
@@ -333,6 +344,35 @@ function cleanupInactive(days) {
   }
 }
 
+// Restaurar sesiones existentes al iniciar el servidor
+async function restoreSessions() {
+  if (!fs.existsSync(SESSIONS_DIR)) return;
+  const dirs = fs.readdirSync(SESSIONS_DIR);
+  console.log(`[restore] Encontradas ${dirs.length} sesiones en disco`);
+  
+  for (const userId of dirs) {
+    const userDir = path.join(SESSIONS_DIR, userId);
+    const stat = fs.statSync(userDir);
+    if (!stat.isDirectory()) continue;
+    
+    // Verificar que tenga credenciales de Baileys
+    const credsPath = path.join(userDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) continue;
+    
+    // Verificar que tenga meta.json con accessCode
+    const meta = loadMeta(userId);
+    if (!meta.accessCode) continue;
+    
+    console.log(`[restore] Restaurando sesion ${userId}...`);
+    try {
+      await createSession(userId);
+    } catch (err) {
+      console.log(`[restore] Error restaurando ${userId}:`, err.message);
+    }
+  }
+  console.log(`[restore] Completado. Sesiones activas: ${activeCount()}`);
+}
+
 module.exports = {
   sessions,
   createSession,
@@ -341,6 +381,7 @@ module.exports = {
   touch,
   activeCount,
   cleanupInactive,
+  restoreSessions,
   cleanId,
   MAX_CONCURRENT_SESSIONS,
 };
