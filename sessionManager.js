@@ -224,9 +224,13 @@ async function createSession(userId) {
   }
 
   sock.ev.on('messaging-history.set', ({ chats }) => {
+    console.log(`[history] Cargando ${chats.length} chats`);
     for (const chat of chats) {
       const prev = entry.chats.get(chat.id);
-      const name = chat.name || resolveName(chat.id) || prev?.name || cleanId(chat.id);
+      // Priorizar nombre del contacto si existe
+      const contactName = resolveName(chat.id);
+      const name = contactName || chat.name || prev?.name || cleanId(chat.id);
+      console.log(`[history] Chat ${chat.id}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
       entry.chats.set(chat.id, {
         name,
         lastMessage: prev?.lastMessage || '',
