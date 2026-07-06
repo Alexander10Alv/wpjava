@@ -346,25 +346,30 @@ function cleanupInactive(days) {
 
 // Restaurar sesiones existentes al iniciar el servidor
 async function restoreSessions() {
-  if (!fs.existsSync(SESSIONS_DIR)) return;
+  console.log('[restore] Iniciando restauracion...');
+  if (!fs.existsSync(SESSIONS_DIR)) {
+    console.log('[restore] Directorio de sesiones no existe, creando...');
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    return;
+  }
   const dirs = fs.readdirSync(SESSIONS_DIR);
   console.log(`[restore] Encontradas ${dirs.length} sesiones en disco`);
   
   for (const userId of dirs) {
     const userDir = path.join(SESSIONS_DIR, userId);
-    const stat = fs.statSync(userDir);
-    if (!stat.isDirectory()) continue;
-    
-    // Verificar que tenga credenciales de Baileys
-    const credsPath = path.join(userDir, 'creds.json');
-    if (!fs.existsSync(credsPath)) continue;
-    
-    // Verificar que tenga meta.json con accessCode
-    const meta = loadMeta(userId);
-    if (!meta.accessCode) continue;
-    
-    console.log(`[restore] Restaurando sesion ${userId}...`);
     try {
+      const stat = fs.statSync(userDir);
+      if (!stat.isDirectory()) continue;
+      
+      // Verificar que tenga credenciales de Baileys
+      const credsPath = path.join(userDir, 'creds.json');
+      if (!fs.existsSync(credsPath)) continue;
+      
+      // Verificar que tenga meta.json con accessCode
+      const meta = loadMeta(userId);
+      if (!meta.accessCode) continue;
+      
+      console.log(`[restore] Restaurando sesion ${userId}...`);
       await createSession(userId);
     } catch (err) {
       console.log(`[restore] Error restaurando ${userId}:`, err.message);
