@@ -22,6 +22,7 @@ function cleanId(jid) {
   if (!jid) return jid;
   if (jid.endsWith('@s.whatsapp.net')) return '+' + jid.replace('@s.whatsapp.net', '');
   if (jid.endsWith('@g.us')) return jid.replace('@g.us', '');
+  if (jid.endsWith('@lid')) return jid.replace('@lid', ''); // Mostrar solo el numero LID
   return jid;
 }
 
@@ -229,7 +230,15 @@ async function createSession(userId) {
       const prev = entry.chats.get(chat.id);
       // Priorizar nombre del contacto si existe
       const contactName = resolveName(chat.id);
-      const name = contactName || chat.name || prev?.name || cleanId(chat.id);
+      let name = contactName || chat.name || prev?.name;
+      
+      // Si es LID sin nombre, mostrar numero limpio en lugar de LID
+      if (!name && chat.id.endsWith('@lid')) {
+        name = lidCache[chat.id] || cleanId(chat.id);
+      }
+      
+      name = name || cleanId(chat.id);
+      
       console.log(`[history] Chat ${chat.id}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
       entry.chats.set(chat.id, {
         name,
@@ -301,6 +310,8 @@ async function createSession(userId) {
       const finalName = prevChat.name && prevChat.name !== cleanId(chatId) 
         ? prevChat.name 
         : (name || cleanId(chatId));
+
+      console.log(`[msg] Chat ${chatId} name: "${finalName}" (prevName: "${prevChat.name}", pushName: "${msg.pushName}", contact: "${resolveName(chatId)}")`);
 
       entry.chats.set(chatId, {
         name: finalName,
