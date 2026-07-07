@@ -178,8 +178,16 @@ async function createSession(userId) {
     console.log(`[contacts] Recibidos ${contacts.length} contactos`);
     for (const c of contacts) {
       if (c.id) {
-        console.log(`[contacts] ID: ${c.id}, name: ${c.name}, notify: ${c.notify}`);
+        console.log(`[contacts] ID: ${c.id}, name: ${c.name}, notify: ${c.notify}, lid: ${c.lid}`);
         entry.contacts[c.id] = c;
+        
+        // Guardar mapeo lid → phoneNumber si viene
+        if (c.lid && c.id) {
+          lidCache[c.lid] = c.id;
+          console.log(`[contacts] Mapeado LID ${c.lid} -> ${c.id}`);
+          saveLidCache(userId, lidCache);
+        }
+        
         // Actualizar nombre del chat si existe
         if (entry.chats.has(c.id)) {
           const chat = entry.chats.get(c.id);
@@ -190,17 +198,45 @@ async function createSession(userId) {
             saveChatsCache(userId, entry.chats, entry.messages);
           }
         }
+        
+        // También actualizar si el chat existe por LID
+        if (c.lid && entry.chats.has(c.lid)) {
+          const chat = entry.chats.get(c.lid);
+          const newName = c.name || c.notify || chat.name;
+          console.log(`[contacts] Actualizando chat LID ${c.lid}: "${chat.name}" -> "${newName}"`);
+          if (newName && newName !== chat.name) {
+            chat.name = newName;
+            saveChatsCache(userId, entry.chats, entry.messages);
+          }
+        }
       }
     }
   });
 
-  // Resolver nombre de un jid usando contacts + lidCache
+  // Resolver nombre de un jid usando contacts + lidCache (con salto lid→phone→name)
   function resolveName(jid) {
     if (!jid) return null;
-    const contact = entry.contacts[jid];
-    if (contact?.name) return contact.name;
-    if (contact?.notify) return contact.notify;
-    if (jid.endsWith('@lid') && lidCache[jid]) return lidCache[jid];
+    
+    // Paso 1: Si es formato de teléfono directo, buscar en contacts
+    if (jid.endsWith('@s.whatsapp.net')) {
+      const contact = entry.contacts[jid];
+      if (contact?.name) return contact.name;
+      if (contact?.notify) return contact.notify;
+      return null;
+    }
+    
+    // Paso 2: Si es @lid, primero resolver a número de teléfono
+    if (jid.endsWith('@lid')) {
+      const phoneJid = lidCache[jid]; // Buscar en cache
+      if (phoneJid) {
+        // Paso 3: Ahora buscar el nombre con el número real
+        const contact = entry.contacts[phoneJid];
+        if (contact?.name) return contact.name;
+        if (contact?.notify) return contact.notify;
+      }
+      return null;
+    }
+    
     return null;
   }
 
