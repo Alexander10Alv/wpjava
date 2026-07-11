@@ -9,7 +9,7 @@ const {
 const QRCode = require('qrcode');
 const pino = require('pino');
 
-const SESSIONS_DIR = process.env.SESSIONS_DIR || './sessions';
+const SESSIONS_DIR = process.env.SESSIONS_DIR || '/app/sessions';
 const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '21', 10);
 
 const sessions = new Map();
@@ -334,18 +334,29 @@ async function createSession(userId) {
         existing.shift(); // Eliminar el más antiguo
       }
 
-      const name = resolveName(chatId) || msg.pushName ||
-                   entry.chats.get(chatId)?.name || cleanId(chatId);
-
-      // Incrementar unreadCount solo para mensajes recibidos (no propios)
+      const agendaName = resolveName(chatId); // Nombre de agenda (más confiable)
       const prevChat = entry.chats.get(chatId) || {};
       const prevUnread = prevChat.unreadCount || 0;
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
-      // Si no hay nombre guardado y viene pushName, usarlo
-      const finalName = prevChat.name && prevChat.name !== cleanId(chatId) 
-        ? prevChat.name 
-        : (name || cleanId(chatId));
+      // Lógica de nombre:
+      // 1. Si está en agenda → siempre usar nombre de agenda
+      // 2. Si prevName ya fue resuelto por agenda → mantenerlo
+      // 3. Si mensaje recibido (no propio) → usar pushName del otro
+      // 4. Fallback → "No conocido"
+      let finalName;
+      if (agendaName) {
+        // Tenemos el contacto en agenda, siempre ganar
+        finalName = agendaName;
+      } else if (prevChat.name && prevChat.name !== cleanId(chatId) && prevChat.name !== 'No conocido') {
+        // Ya habia un nombre previo no-generico, mantenerlo (puede ser pushName guardado)
+        finalName = prevChat.name;
+      } else if (!msg.key.fromMe && msg.pushName) {
+        // Mensaje recibido: usar pushName del otro (no el nuestro)
+        finalName = msg.pushName;
+      } else {
+        finalName = 'No conocido';
+      }
 
       console.log(`[msg] Chat ${chatId} name: "${finalName}" (prevName: "${prevChat.name}", pushName: "${msg.pushName}", contact: "${resolveName(chatId)}")`);
 
