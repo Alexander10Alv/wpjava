@@ -264,17 +264,18 @@ async function createSession(userId) {
     console.log(`[history] Cargando ${chats.length} chats`);
     for (const chat of chats) {
       const prev = entry.chats.get(chat.id);
-      // Priorizar nombre del contacto si existe
       const contactName = resolveName(chat.id);
-      let name = contactName || chat.name || prev?.name;
-      
-      // Si es LID sin nombre, mostrar numero limpio en lugar de LID
-      if (!name && chat.id.endsWith('@lid')) {
-        name = lidCache[chat.id] || cleanId(chat.id);
+      // Misma lógica que messages.upsert: agenda > chat.name > "No conocido"
+      let name;
+      if (contactName) {
+        name = contactName;
+      } else if (chat.name) {
+        name = chat.name;
+      } else if (prev?.name && prev.name !== cleanId(chat.id) && prev.name !== 'No conocido') {
+        name = prev.name;
+      } else {
+        name = 'No conocido';
       }
-      
-      name = name || cleanId(chat.id);
-      
       console.log(`[history] Chat ${chat.id}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
       entry.chats.set(chat.id, {
         name,
@@ -282,7 +283,6 @@ async function createSession(userId) {
         lastTimestamp: chat.conversationTimestamp || prev?.lastTimestamp || 0,
         unreadCount: prev?.unreadCount || 0,
       });
-      // Intentar resolver @lid en background
       if (chat.id.endsWith('@lid')) tryResolveLid(chat.id);
     }
     saveChatsCache(userId, entry.chats, entry.messages);
