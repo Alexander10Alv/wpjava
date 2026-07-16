@@ -5,6 +5,7 @@ const {
   getSession,
   checkAccess,
   touch,
+  saveOutbox,
 } = require('./sessionManager');
 
 const router = express.Router();
@@ -101,9 +102,7 @@ router.post('/send', async (req, res) => {
     return res.status(401).json({ error: 'Codigo de acceso invalido' });
   }
   const session = getSession(userId);
-  if (!session || session.status !== 'connected') {
-    return res.status(400).json({ error: 'Sesion no conectada' });
-  }
+
   // Normalizar chatId: si viene como +51xxx o 51xxx, convertir a JID de WhatsApp
   let jid = chatId;
   if (!jid.includes('@')) {
@@ -111,9 +110,16 @@ router.post('/send', async (req, res) => {
     jid = digits + '@s.whatsapp.net';
   }
   // Normalizar @lid a @s.whatsapp.net
-  if (jid.endsWith('@lid') && session.lidCache && session.lidCache[jid]) {
+  if (jid.endsWith('@lid') && session && session.lidCache && session.lidCache[jid]) {
     jid = session.lidCache[jid] + '@s.whatsapp.net';
   }
+
+  if (!session || session.status !== 'connected') {
+    saveOutbox(userId, jid, message);
+    console.log(`[send] Encolado para ${jid}`);
+    return res.json({ queued: true, message: 'Mensaje encolado, se enviara cuando la sesion reconecte' });
+  }
+
   try {
     const sent = await session.sock.sendMessage(jid, { text: message });
     touch(userId);

@@ -10,6 +10,7 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 
 const SESSIONS_DIR = process.env.SESSIONS_DIR || '/app/sessions';
+const DATA_DIR = process.env.DATA_DIR || '/app/data';
 const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '21', 10);
 
 const sessions = new Map();
@@ -81,6 +82,100 @@ function loadChatsCache(userId) {
   }
 }
 
+// --- Persistencia separada de inbox/outbox (no se borra al reconectar) ---
+
+function saveInbox(userId, chatId, msgEntry) {
+  try {
+    const dir = path.join(DATA_DIR, userId);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'inbox.json');
+    let data = [];
+    if (fs.existsSync(file)) {
+      data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    }
+    if (data.find(m => m.id === msgEntry.id && m.chatId === chatId)) return;
+    data.push({ chatId, ...msgEntry });
+    if (data.length > 200) data = data.slice(-200);
+    fs.writeFileSync(file, JSON.stringify(data));
+  } catch (_) {}
+}
+
+function loadInbox(userId) {
+  try {
+    const file = path.join(DATA_DIR, userId, 'inbox.json');
+    if (!fs.existsSync(file)) return new Map();
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const map = new Map();
+    for (const item of data) {
+      if (!map.has(item.chatId)) map.set(item.chatId, []);
+      map.get(item.chatId).push(item);
+    }
+    return map;
+  } catch (_) { return new Map(); }
+}
+
+function saveOutbox(userId, jid, message) {
+  try {
+    const dir = path.join(DATA_DIR, userId);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'outbox.json');
+    let data = [];
+    if (fs.existsSync(file)) {
+      data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    }
+    data.push({ jid, message, timestamp: Date.now() });
+    if (data.length > 100) data = data.slice(-100);
+    fs.writeFileSync(file, JSON.stringify(data));
+  } catch (_) {}
+}
+
+function loadOutbox(userId) {
+  try {
+    const file = path.join(DATA_DIR, userId, 'outbox.json');
+    if (!fs.existsSync(file)) return [];
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (_) { return []; }
+}
+
+async function processOutbox(userId, sock) {
+  const items = loadOutbox(userId);
+  if (items.length === 0) return;
+  console.log(`[outbox] Enviando ${items.length} mensajes pendientes...`);
+  try {
+    fs.writeFileSync(path.join(DATA_DIR, userId, 'outbox.json'), '[]');
+    for (const item of items) {
+      try {
+        await sock.sendMessage(item.jid, { text: item.message });
+        console.log(`[outbox] Enviado a ${item.jid}`);
+      } catch (e) {
+        console.log(`[outbox] Error con ${item.jid}: ${e.message}`);
+      }
+    }
+  } catch (_) {}
+}
+
+function cleanupMedia(days) {
+  const dirs = [DATA_DIR, SESSIONS_DIR];
+  const limit = Date.now() - days * 24 * 60 * 60 * 1000;
+  for (const baseDir of dirs) {
+    if (!fs.existsSync(baseDir)) continue;
+    const walk = (dir) => {
+      try {
+        for (const e of fs.readdirSync(dir)) {
+          const full = path.join(dir, e);
+          if (fs.statSync(full).isDirectory()) { walk(full); continue; }
+          if (full.endsWith('.ogg') || full.endsWith('.mp3') || full.endsWith('.amr') || full.endsWith('.jpg') || full.endsWith('.jpeg') || full.endsWith('.png')) {
+            if (fs.statSync(full).mtimeMs < limit) {
+              fs.unlinkSync(full);
+            }
+          }
+        }
+      } catch (_) {}
+    };
+    walk(baseDir);
+  }
+}
+
 function touch(userId) {
   const s = sessions.get(userId);
   if (s) s.lastActivity = Date.now();
@@ -117,6 +212,21 @@ async function createSession(userId) {
   const savedMeta = loadMeta(userId);
   const lidCache = loadLidCache(userId);
   const { chats: cachedChats, messages: cachedMessages } = loadChatsCache(userId);
+  // Combinar mensajes del inbox persistente (no se borra al reconectar)
+  const inboxMessages = loadInbox(userId);
+  for (const [cid, imsgs] of inboxMessages.entries()) {
+    const existing = cachedMessages.get(cid) || [];
+    const merged = [...existing];
+    for (const im of imsgs) {
+      const idx = merged.findIndex(m => m.id === im.id);
+      if (idx >= 0) {
+        merged[idx] = im;
+      } else {
+        merged.push(im);
+      }
+    }
+    cachedMessages.set(cid, merged.slice(-10));
+  }
 
   const entry = {
     sock,
@@ -152,6 +262,7 @@ async function createSession(userId) {
       saveMeta(userId, entry.accessCode);
       console.log(`[session] ${userId} conectado, code: ${entry.accessCode}`);
       touch(userId);
+      processOutbox(userId, entry.sock).catch(e => console.error('[outbox] Error:', e));
     }
 
     if (connection === 'close') {
@@ -398,6 +509,35 @@ async function createSession(userId) {
     saveChatsCache(userId, entry.chats, entry.messages);
   });
 
+  // Persistir mensajes entrantes en inbox separado (no se borra al reconectar)
+  sock.ev.on('messages.upsert', ({ messages }) => {
+    for (const msg of messages) {
+      const chatId = msg.key.remoteJid;
+      if (!chatId) continue;
+      if (!msg.message) continue;
+      const normId = (chatId.endsWith('@lid') && entry.lidCache[chatId])
+        ? entry.lidCache[chatId] + '@s.whatsapp.net'
+        : chatId;
+      const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '[media]';
+      const isImage = !!msg.message?.imageMessage;
+      const isAudio = !!msg.message?.audioMessage;
+      if (msg.message?.reactionMessage || msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+      const msgEntry = {
+        id: msg.key.id,
+        fromMe: !!msg.key.fromMe,
+        text: isImage ? '[imagen]' : isAudio ? '[audio]' : text,
+        type: isImage ? 'image' : isAudio ? 'audio' : 'text',
+        timestamp: msg.messageTimestamp,
+        pushName: msg.pushName || null,
+        raw: (isImage || isAudio) ? msg : undefined,
+      };
+      if (isAudio) {
+        msgEntry.duration = msg.message.audioMessage.seconds || 0;
+      }
+      saveInbox(userId, normId, msgEntry);
+    }
+  });
+
   // Presencia: escribiendo o no
   sock.ev.on('presence.update', ({ id, presences }) => {
     for (const [participant, data] of Object.entries(presences)) {
@@ -490,5 +630,7 @@ module.exports = {
   cleanupInactive,
   restoreSessions,
   cleanId,
+  saveOutbox,
+  cleanupMedia,
   MAX_CONCURRENT_SESSIONS,
 };

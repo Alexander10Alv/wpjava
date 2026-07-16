@@ -6,6 +6,7 @@ const {
   restoreSessions,
   activeCount,
   MAX_CONCURRENT_SESSIONS,
+  cleanupMedia,
 } = require('./sessionManager');
 
 const app = express();
@@ -33,6 +34,9 @@ app.listen(PORT, '0.0.0.0', () => {
 
 const INACTIVE_DAYS = parseInt(process.env.INACTIVE_SESSION_DAYS || '30', 10);
 setInterval(() => cleanupInactive(INACTIVE_DAYS), 24 * 60 * 60 * 1000);
+
+// Limpieza de fotos/audios antiguos cada 24 horas (2 dias)
+setInterval(() => cleanupMedia(2), 24 * 60 * 60 * 1000);
 
 process.on('SIGINT', () => {
   console.log('Cerrando servidor...');
