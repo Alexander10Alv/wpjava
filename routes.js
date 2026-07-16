@@ -54,10 +54,12 @@ router.get('/chats/:userId', auth, (req, res) => {
 
 router.post('/markAsRead/:userId/:chatId', auth, (req, res) => {
   const session = getSession(req.params.userId);
-  const raw = req.params.chatId;
-  const chatId = (raw.endsWith('@lid') && session.lidCache[raw])
-    ? session.lidCache[raw] + '@s.whatsapp.net'
-    : raw;
+  let chatId = req.params.chatId;
+  if (!chatId.includes('@')) {
+    chatId = chatId.replace(/\D/g, '') + '@s.whatsapp.net';
+  } else if (chatId.endsWith('@lid') && session.lidCache[chatId]) {
+    chatId = session.lidCache[chatId] + '@s.whatsapp.net';
+  }
   const chat = session.chats.get(chatId);
   if (chat) {
     chat.unreadCount = 0;
@@ -68,10 +70,12 @@ router.post('/markAsRead/:userId/:chatId', auth, (req, res) => {
 
 router.get('/messages/:userId/:chatId', auth, (req, res) => {
   const session = getSession(req.params.userId);
-  const raw = req.params.chatId;
-  const normChatId = (raw.endsWith('@lid') && session.lidCache[raw])
-    ? session.lidCache[raw] + '@s.whatsapp.net'
-    : raw;
+  let normChatId = req.params.chatId;
+  if (!normChatId.includes('@')) {
+    normChatId = normChatId.replace(/\D/g, '') + '@s.whatsapp.net';
+  } else if (normChatId.endsWith('@lid') && session.lidCache[normChatId]) {
+    normChatId = session.lidCache[normChatId] + '@s.whatsapp.net';
+  }
   const all = session.messages.get(normChatId) || [];
   const page = parseInt(req.query.page || '0', 10);
   const pageSize = 10;
@@ -114,6 +118,11 @@ router.post('/send', async (req, res) => {
     jid = session.lidCache[jid] + '@s.whatsapp.net';
   }
 
+  // Crear entrada de chat inmediatamente para que aparezca en GET /chats sin esperar a Baileys
+  if (session && !session.chats.has(jid)) {
+    session.chats.set(jid, { name: 'No conocido', lastMessage: '', lastTimestamp: Date.now(), unreadCount: 0 });
+  }
+
   if (!session || session.status !== 'connected') {
     saveOutbox(userId, jid, message);
     console.log(`[send] Encolado para ${jid}`);
@@ -121,6 +130,11 @@ router.post('/send', async (req, res) => {
   }
 
   try {
+    // Resolver JID canónico para evitar crash #1785
+    try {
+      const [wa] = await session.sock.onWhatsApp(jid);
+      if (wa?.exists && wa?.jid) jid = wa.jid;
+    } catch (_) {}
     const sent = await session.sock.sendMessage(jid, { text: message });
     touch(userId);
     res.json({ ok: true, id: sent?.key?.id || null });
@@ -138,10 +152,12 @@ module.exports = router;
 // Devuelve si el otro esta escribiendo en ese chat
 router.get('/presence/:userId/:chatId', auth, async (req, res) => {
   const session = getSession(req.params.userId);
-  const raw = req.params.chatId;
-  const chatId = (raw.endsWith('@lid') && session.lidCache[raw])
-    ? session.lidCache[raw] + '@s.whatsapp.net'
-    : raw;
+  let chatId = req.params.chatId;
+  if (!chatId.includes('@')) {
+    chatId = chatId.replace(/\D/g, '') + '@s.whatsapp.net';
+  } else if (chatId.endsWith('@lid') && session.lidCache[chatId]) {
+    chatId = session.lidCache[chatId] + '@s.whatsapp.net';
+  }
 
   // Suscribirse a la presencia de ese chat (necesario para recibir updates)
   try {
@@ -165,9 +181,12 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
 
   try {
     const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-    const normChatId = (chatId.endsWith('@lid') && session.lidCache && session.lidCache[chatId])
-      ? session.lidCache[chatId] + '@s.whatsapp.net'
-      : chatId;
+    let normChatId = chatId;
+    if (!normChatId.includes('@')) {
+      normChatId = normChatId.replace(/\D/g, '') + '@s.whatsapp.net';
+    } else if (normChatId.endsWith('@lid') && session.lidCache && session.lidCache[normChatId]) {
+      normChatId = session.lidCache[normChatId] + '@s.whatsapp.net';
+    }
     const messages = session.messages.get(normChatId) || [];
     console.log('[media] Total messages in chat:', messages.length);
     

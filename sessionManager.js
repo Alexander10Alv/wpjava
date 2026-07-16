@@ -123,7 +123,7 @@ function saveOutbox(userId, jid, message) {
     if (fs.existsSync(file)) {
       data = JSON.parse(fs.readFileSync(file, 'utf8'));
     }
-    data.push({ jid, message, timestamp: Date.now() });
+    data.push({ jid, message, timestamp: Date.now(), retries: 0 });
     if (data.length > 100) data = data.slice(-100);
     fs.writeFileSync(file, JSON.stringify(data));
   } catch (_) {}
@@ -141,16 +141,23 @@ async function processOutbox(userId, sock) {
   const items = loadOutbox(userId);
   if (items.length === 0) return;
   console.log(`[outbox] Enviando ${items.length} mensajes pendientes...`);
-  try {
-    fs.writeFileSync(path.join(DATA_DIR, userId, 'outbox.json'), '[]');
-    for (const item of items) {
+  const remaining = [];
+  for (const item of items) {
+    try {
+      let jid = item.jid;
       try {
-        await sock.sendMessage(item.jid, { text: item.message });
-        console.log(`[outbox] Enviado a ${item.jid}`);
-      } catch (e) {
-        console.log(`[outbox] Error con ${item.jid}: ${e.message}`);
-      }
+        const [wa] = await sock.onWhatsApp(jid);
+        if (wa?.exists && wa?.jid) jid = wa.jid;
+      } catch (_) {}
+      await sock.sendMessage(jid, { text: item.message });
+      console.log(`[outbox] Enviado a ${jid}`);
+    } catch (e) {
+      remaining.push({ ...item, retries: (item.retries || 0) + 1 });
+      console.log(`[outbox] Error con ${item.jid}, reintento ${(item.retries || 0) + 1}`);
     }
+  }
+  try {
+    fs.writeFileSync(path.join(DATA_DIR, userId, 'outbox.json'), JSON.stringify(remaining));
   } catch (_) {}
 }
 
@@ -294,8 +301,8 @@ async function createSession(userId) {
         
         // Guardar mapeo lid → phoneNumber si viene
         if (c.lid && c.id) {
-          lidCache[c.lid] = c.id;
-          console.log(`[contacts] Mapeado LID ${c.lid} -> ${c.id}`);
+          lidCache[c.lid] = c.id.replace('@s.whatsapp.net', '');
+          console.log(`[contacts] Mapeado LID ${c.lid} -> ${lidCache[c.lid]}`);
           saveLidCache(userId, lidCache);
         }
         
@@ -341,7 +348,7 @@ async function createSession(userId) {
       const phoneJid = lidCache[jid]; // Buscar en cache
       if (phoneJid) {
         // Paso 3: Ahora buscar el nombre con el número real
-        const contact = entry.contacts[phoneJid];
+        const contact = entry.contacts[phoneJid + '@s.whatsapp.net'];
         if (contact?.name) return contact.name;
         if (contact?.notify) return contact.notify;
       }
@@ -357,7 +364,7 @@ async function createSession(userId) {
     try {
       const [result] = await sock.onWhatsApp(jid);
       if (result?.exists && result?.jid) {
-        const numero = '+' + result.jid.replace('@s.whatsapp.net', '');
+        const numero = result.jid.replace('@s.whatsapp.net', '');
         lidCache[jid] = numero;
         saveLidCache(userId, lidCache);
         // Actualizar nombre en chats si ya existe
