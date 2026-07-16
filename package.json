@@ -7,7 +7,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "latest",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "express": "^4.19.2",
     "qrcode": "^1.5.3",
     "uuid": "^9.0.1",

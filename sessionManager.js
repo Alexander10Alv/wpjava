@@ -1,13 +1,12 @@
 const path = require('path');
 const fs = require('fs');
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-} = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const pino = require('pino');
+let _baileys = null;
+async function B() {
+  if (!_baileys) _baileys = await import('@whiskeysockets/baileys');
+  return _baileys;
+}
 
 const SESSIONS_DIR = process.env.SESSIONS_DIR || '/app/sessions';
 const DATA_DIR = process.env.DATA_DIR || '/app/data';
@@ -206,10 +205,10 @@ async function createSession(userId) {
   const userDir = path.join(SESSIONS_DIR, userId);
   fs.mkdirSync(userDir, { recursive: true });
 
-  const { state, saveCreds } = await useMultiFileAuthState(userDir);
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
+  const baileys = await B();
+  const { state, saveCreds } = await baileys.useMultiFileAuthState(userDir);
+  const { version } = await baileys.fetchLatestWaWebVersion();
+  const sock = baileys.default({
     version,
     auth: state,
     logger: pino({ level: 'silent' }),
@@ -273,8 +272,9 @@ async function createSession(userId) {
     }
 
     if (connection === 'close') {
+      const baileys = await B();
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      const loggedOut = statusCode === baileys.DisconnectReason.loggedOut;
 
       if (loggedOut) {
         sessions.delete(userId);
@@ -296,13 +296,17 @@ async function createSession(userId) {
     console.log(`[contacts] Recibidos ${contacts.length} contactos`);
     for (const c of contacts) {
       if (c.id) {
-        console.log(`[contacts] ID: ${c.id}, name: ${c.name}, notify: ${c.notify}, lid: ${c.lid}`);
+        console.log(`[contacts] ID: ${c.id}, name: ${c.name}, notify: ${c.notify}, phoneNumber: ${c.phoneNumber}, lid: ${c.lid}`);
         entry.contacts[c.id] = c;
         
-        // Guardar mapeo lid → phoneNumber si viene
-        if (c.lid && c.id) {
+        // v7: Contact tiene id (preferred), phoneNumber (si id es LID), lid (si id es PN)
+        if (c.id.endsWith('@s.whatsapp.net') && c.lid) {
           lidCache[c.lid] = c.id.replace('@s.whatsapp.net', '');
           console.log(`[contacts] Mapeado LID ${c.lid} -> ${lidCache[c.lid]}`);
+          saveLidCache(userId, lidCache);
+        } else if (c.id.endsWith('@lid') && c.phoneNumber) {
+          lidCache[c.id] = c.phoneNumber.replace('@s.whatsapp.net', '');
+          console.log(`[contacts] Mapeado LID ${c.id} -> ${lidCache[c.id]}`);
           saveLidCache(userId, lidCache);
         }
         
@@ -362,12 +366,21 @@ async function createSession(userId) {
   async function tryResolveLid(jid) {
     if (!jid.endsWith('@lid') || lidCache[jid]) return;
     try {
-      const [result] = await sock.onWhatsApp(jid);
-      if (result?.exists && result?.jid) {
-        const numero = result.jid.replace('@s.whatsapp.net', '');
+      let numero = null;
+      // v7: signalRepository.lidMapping.getPNForLID() reemplaza onWhatsApp para LIDs
+      if (sock.signalRepository?.lidMapping) {
+        const pn = sock.signalRepository.lidMapping.getPNForLID(jid);
+        if (pn) numero = pn.replace('@s.whatsapp.net', '');
+      }
+      if (!numero) {
+        const [result] = await sock.onWhatsApp(jid);
+        if (result?.exists && result?.jid) {
+          numero = result.jid.replace('@s.whatsapp.net', '');
+        }
+      }
+      if (numero) {
         lidCache[jid] = numero;
         saveLidCache(userId, lidCache);
-        // Actualizar nombre en chats si ya existe
         if (entry.chats.has(jid)) {
           const chat = entry.chats.get(jid);
           if (!chat.name || chat.name === cleanId(jid)) {

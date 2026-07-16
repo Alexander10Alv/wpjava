@@ -180,7 +180,7 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
   if (!chatId) return res.status(400).json({ error: 'Falta chatId' });
 
   try {
-    const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+    const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
     let normChatId = chatId;
     if (!normChatId.includes('@')) {
       normChatId = normChatId.replace(/\D/g, '') + '@s.whatsapp.net';
