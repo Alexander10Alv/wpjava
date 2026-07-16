@@ -276,6 +276,8 @@ async function createSession(userId) {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const loggedOut = statusCode === baileys.DisconnectReason.loggedOut;
 
+      console.log(`[session] ${userId} connection=close, loggedOut=${loggedOut}, statusCode=${statusCode}, chats en memoria: ${entry.chats.size}`);
+
       if (loggedOut) {
         sessions.delete(userId);
         fs.rmSync(userDir, { recursive: true, force: true });
@@ -451,8 +453,7 @@ async function createSession(userId) {
         }
       }
 
-      // Log para debug de mensajes entrantes
-      console.log('[msg]', msg.key.id, 'keys:', Object.keys(msg.message || {}).join(','));
+      console.log('[msg]', msg.key.id, 'keys:', Object.keys(msg.message || {}).join(','), 'chatId:', chatId, '-> normId:', normId, 'fromMe:', msg.key.fromMe);
 
       // Ignorar solo mensajes completamente vacios (sin message object)
       if (!msg.message) continue;

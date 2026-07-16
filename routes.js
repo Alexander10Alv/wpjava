@@ -49,6 +49,7 @@ router.get('/chats/:userId', auth, (req, res) => {
   const chats = [...session.chats.entries()]
     .map(([id, c]) => ({ id, ...c, unreadCount: c.unreadCount || 0 }))
     .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+  console.log('[chats] Devolviendo', chats.length, 'chats:', chats.map(c => ({ id: c.id, name: c.name, lastMsg: c.lastMessage })));
   res.json({ chats });
 });
 
@@ -70,23 +71,25 @@ router.post('/markAsRead/:userId/:chatId', auth, (req, res) => {
 
 router.get('/messages/:userId/:chatId', auth, (req, res) => {
   const session = getSession(req.params.userId);
-  let normChatId = req.params.chatId;
+  const rawChatId = req.params.chatId;
+  let normChatId = rawChatId;
   if (!normChatId.includes('@')) {
     normChatId = normChatId.replace(/\D/g, '') + '@s.whatsapp.net';
   } else if (normChatId.endsWith('@lid') && session.lidCache[normChatId]) {
     normChatId = session.lidCache[normChatId] + '@s.whatsapp.net';
   }
   const all = session.messages.get(normChatId) || [];
+  console.log('[messages] Solicitado rawChatId:', rawChatId, '-> normChatId:', normChatId, 'total msgs:', all.length);
   const page = parseInt(req.query.page || '0', 10);
   const pageSize = 10;
   const start = Math.max(all.length - pageSize * (page + 1), 0);
   const end = all.length - pageSize * page;
   const messages = all.slice(start, end).map(({ raw, ...m }) => m);
+  console.log('[messages] Devolviendo page', page, 'slice', start, '-', end, '=', messages.length, 'mensajes');
   res.json({ messages, hasMore: start > 0 });
 });
 
 router.post('/send', async (req, res) => {
-  // DEBUG TEMPORAL - borrar cuando funcione
   console.log('[send] body:', JSON.stringify(req.body));
   console.log('[send] headers content-type:', req.headers['content-type']);
 
@@ -135,7 +138,35 @@ router.post('/send', async (req, res) => {
       const [wa] = await session.sock.onWhatsApp(jid);
       if (wa?.exists && wa?.jid) jid = wa.jid;
     } catch (_) {}
+    console.log('[send] Enviando a jid:', jid);
     const sent = await session.sock.sendMessage(jid, { text: message });
+    console.log('[send] sendMessage OK, sent.key:', JSON.stringify(sent?.key));
+
+    // Agregar mensaje a la lista inmediatamente (no esperar messages.upsert)
+    const msgEntry = {
+      id: sent?.key?.id || 'pending_' + Date.now(),
+      fromMe: true,
+      text: message,
+      type: 'text',
+      timestamp: Math.floor(Date.now() / 1000),
+    };
+    if (!session.messages.has(jid)) session.messages.set(jid, []);
+    const msgs = session.messages.get(jid);
+    if (!msgs.find(m => m.id === msgEntry.id)) {
+      msgs.push(msgEntry);
+      if (msgs.length > 10) msgs.shift();
+    }
+
+    // Actualizar chat con el último mensaje
+    const chat = session.chats.get(jid);
+    if (chat) {
+      chat.lastMessage = message;
+      chat.lastTimestamp = msgEntry.timestamp * 1000;
+    }
+
+    console.log('[send] messages ahora tiene', session.messages.get(jid)?.length, 'mensajes para', jid);
+    console.log('[send] chat ahora es:', JSON.stringify(session.chats.get(jid)));
+
     touch(userId);
     res.json({ ok: true, id: sent?.key?.id || null });
   } catch (err) {
