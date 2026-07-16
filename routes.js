@@ -53,7 +53,10 @@ router.get('/chats/:userId', auth, (req, res) => {
 
 router.post('/markAsRead/:userId/:chatId', auth, (req, res) => {
   const session = getSession(req.params.userId);
-  const chatId = req.params.chatId;
+  const raw = req.params.chatId;
+  const chatId = (raw.endsWith('@lid') && session.lidCache[raw])
+    ? session.lidCache[raw] + '@s.whatsapp.net'
+    : raw;
   const chat = session.chats.get(chatId);
   if (chat) {
     chat.unreadCount = 0;
@@ -64,7 +67,11 @@ router.post('/markAsRead/:userId/:chatId', auth, (req, res) => {
 
 router.get('/messages/:userId/:chatId', auth, (req, res) => {
   const session = getSession(req.params.userId);
-  const all = session.messages.get(req.params.chatId) || [];
+  const raw = req.params.chatId;
+  const normChatId = (raw.endsWith('@lid') && session.lidCache[raw])
+    ? session.lidCache[raw] + '@s.whatsapp.net'
+    : raw;
+  const all = session.messages.get(normChatId) || [];
   const page = parseInt(req.query.page || '0', 10);
   const pageSize = 10;
   const start = Math.max(all.length - pageSize * (page + 1), 0);
@@ -103,6 +110,10 @@ router.post('/send', async (req, res) => {
     const digits = jid.replace(/\D/g, '');
     jid = digits + '@s.whatsapp.net';
   }
+  // Normalizar @lid a @s.whatsapp.net
+  if (jid.endsWith('@lid') && session.lidCache && session.lidCache[jid]) {
+    jid = session.lidCache[jid] + '@s.whatsapp.net';
+  }
   try {
     const sent = await session.sock.sendMessage(jid, { text: message });
     touch(userId);
@@ -119,7 +130,10 @@ module.exports = router;
 // Devuelve si el otro esta escribiendo en ese chat
 router.get('/presence/:userId/:chatId', auth, async (req, res) => {
   const session = getSession(req.params.userId);
-  const chatId = req.params.chatId;
+  const raw = req.params.chatId;
+  const chatId = (raw.endsWith('@lid') && session.lidCache[raw])
+    ? session.lidCache[raw] + '@s.whatsapp.net'
+    : raw;
 
   // Suscribirse a la presencia de ese chat (necesario para recibir updates)
   try {
@@ -143,7 +157,10 @@ router.get('/media/:userId/:messageId', auth, async (req, res) => {
 
   try {
     const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-    const messages = session.messages.get(chatId) || [];
+    const normChatId = (chatId.endsWith('@lid') && session.lidCache && session.lidCache[chatId])
+      ? session.lidCache[chatId] + '@s.whatsapp.net'
+      : chatId;
+    const messages = session.messages.get(normChatId) || [];
     console.log('[media] Total messages in chat:', messages.length);
     
     const msg = messages.find(m => m.id === req.params.messageId);

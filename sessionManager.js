@@ -263,21 +263,33 @@ async function createSession(userId) {
   sock.ev.on('messaging-history.set', ({ chats }) => {
     console.log(`[history] Cargando ${chats.length} chats`);
     for (const chat of chats) {
-      const prev = entry.chats.get(chat.id);
-      const contactName = resolveName(chat.id);
-      // Misma lógica que messages.upsert: agenda > chat.name > "No conocido"
+      const normId = (chat.id.endsWith('@lid') && entry.lidCache[chat.id])
+        ? entry.lidCache[chat.id] + '@s.whatsapp.net'
+        : chat.id;
+      if (normId !== chat.id) {
+        if (entry.chats.has(chat.id) && !entry.chats.has(normId)) {
+          entry.chats.set(normId, entry.chats.get(chat.id));
+          entry.chats.delete(chat.id);
+        }
+        if (entry.messages.has(chat.id) && !entry.messages.has(normId)) {
+          entry.messages.set(normId, entry.messages.get(chat.id));
+          entry.messages.delete(chat.id);
+        }
+      }
+      const prev = entry.chats.get(normId);
+      const contactName = resolveName(normId);
       let name;
       if (contactName) {
         name = contactName;
       } else if (chat.name) {
         name = chat.name;
-      } else if (prev?.name && prev.name !== cleanId(chat.id) && prev.name !== 'No conocido') {
+      } else if (prev?.name && prev.name !== cleanId(normId) && prev.name !== 'No conocido') {
         name = prev.name;
       } else {
         name = 'No conocido';
       }
-      console.log(`[history] Chat ${chat.id}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
-      entry.chats.set(chat.id, {
+      console.log(`[history] Chat ${normId}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
+      entry.chats.set(normId, {
         name,
         lastMessage: prev?.lastMessage || '',
         lastTimestamp: chat.conversationTimestamp || prev?.lastTimestamp || 0,
@@ -292,6 +304,21 @@ async function createSession(userId) {
     for (const msg of messages) {
       const chatId = msg.key.remoteJid;
       if (!chatId) continue;
+
+      // Normalizar @lid a @s.whatsapp.net si tenemos mapeo
+      const normId = (chatId.endsWith('@lid') && entry.lidCache[chatId])
+        ? entry.lidCache[chatId] + '@s.whatsapp.net'
+        : chatId;
+      if (normId !== chatId) {
+        if (entry.chats.has(chatId) && !entry.chats.has(normId)) {
+          entry.chats.set(normId, entry.chats.get(chatId));
+          entry.chats.delete(chatId);
+        }
+        if (entry.messages.has(chatId) && !entry.messages.has(normId)) {
+          entry.messages.set(normId, entry.messages.get(chatId));
+          entry.messages.delete(chatId);
+        }
+      }
 
       // Log para debug de mensajes entrantes
       console.log('[msg]', msg.key.id, 'keys:', Object.keys(msg.message || {}).join(','));
@@ -310,9 +337,9 @@ async function createSession(userId) {
       // Ignorar reacciones y mensajes de protocolo que no tienen contenido visible
       if (msg.message?.reactionMessage || msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
 
-      if (!entry.messages.has(chatId)) entry.messages.set(chatId, []);
+      if (!entry.messages.has(normId)) entry.messages.set(normId, []);
       // Evitar duplicados por id
-      const existing = entry.messages.get(chatId);
+      const existing = entry.messages.get(normId);
       if (existing.find(m => m.id === msg.key.id)) continue;
 
       const msgEntry = {
@@ -334,8 +361,8 @@ async function createSession(userId) {
         existing.shift(); // Eliminar el más antiguo
       }
 
-      const agendaName = resolveName(chatId); // Nombre de agenda (más confiable)
-      const prevChat = entry.chats.get(chatId) || {};
+      const agendaName = resolveName(normId);
+      const prevChat = entry.chats.get(normId) || {};
       const prevUnread = prevChat.unreadCount || 0;
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
@@ -346,21 +373,18 @@ async function createSession(userId) {
       // 4. Fallback → "No conocido"
       let finalName;
       if (agendaName) {
-        // Tenemos el contacto en agenda, siempre ganar
         finalName = agendaName;
-      } else if (prevChat.name && prevChat.name !== cleanId(chatId) && prevChat.name !== 'No conocido') {
-        // Ya habia un nombre previo no-generico, mantenerlo (puede ser pushName guardado)
+      } else if (prevChat.name && prevChat.name !== cleanId(normId) && prevChat.name !== 'No conocido') {
         finalName = prevChat.name;
       } else if (!msg.key.fromMe && msg.pushName) {
-        // Mensaje recibido: usar pushName del otro (no el nuestro)
         finalName = msg.pushName;
       } else {
         finalName = 'No conocido';
       }
 
-      console.log(`[msg] Chat ${chatId} name: "${finalName}" (prevName: "${prevChat.name}", pushName: "${msg.pushName}", contact: "${resolveName(chatId)}")`);
+      console.log(`[msg] Chat ${normId} name: "${finalName}" (prevName: "${prevChat.name}", pushName: "${msg.pushName}", contact: "${resolveName(normId)}")`);
 
-      entry.chats.set(chatId, {
+      entry.chats.set(normId, {
         name: finalName,
         lastMessage: isImage ? '[imagen]' : isAudio ? '[audio]' : (text || ''),
         lastTimestamp: msg.messageTimestamp,
@@ -378,7 +402,10 @@ async function createSession(userId) {
   sock.ev.on('presence.update', ({ id, presences }) => {
     for (const [participant, data] of Object.entries(presences)) {
       const isTyping = data.lastKnownPresence === 'composing' || data.lastKnownPresence === 'recording';
-      entry.presence.set(id, { typing: isTyping, timestamp: Date.now() });
+      const normId = (id.endsWith('@lid') && entry.lidCache[id])
+        ? entry.lidCache[id] + '@s.whatsapp.net'
+        : id;
+      entry.presence.set(normId, { typing: isTyping, timestamp: Date.now() });
     }
   });
 
