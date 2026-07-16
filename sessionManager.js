@@ -267,6 +267,23 @@ async function createSession(userId) {
       }
       saveMeta(userId, entry.accessCode);
       console.log(`[session] ${userId} conectado, code: ${entry.accessCode}`);
+
+      // Sembrar lidCache desde signalRepository (mapeos ya conocidos por Baileys)
+      try {
+        if (sock.signalRepository?.lidMapping && typeof sock.signalRepository.lidMapping.getPNForLID === 'function') {
+          const lids = Object.keys(entry.lidCache);
+          for (const lid of lids) {
+            if (!entry.lidCache[lid] && lid.endsWith('@lid')) {
+              const pn = sock.signalRepository.lidMapping.getPNForLID(lid);
+              if (pn) {
+                entry.lidCache[lid] = pn.replace('@s.whatsapp.net', '');
+              }
+            }
+          }
+          saveLidCache(userId, entry.lidCache);
+        }
+      } catch (_) {}
+
       touch(userId);
       processOutbox(userId, entry.sock).catch(e => console.error('[outbox] Error:', e));
     }
@@ -337,6 +354,20 @@ async function createSession(userId) {
     }
   });
 
+  // Escuchar mapeos LID→PN que Baileys descubra dinámicamente
+  sock.ev.on('lid-mapping.update', (mappings) => {
+    if (!mappings) return;
+    console.log('[lid-mapping] Recibido update:', Object.keys(mappings).length, 'mapeos');
+    for (const [lid, pn] of Object.entries(mappings)) {
+      const barePn = pn.replace('@s.whatsapp.net', '');
+      if (!entry.lidCache[lid]) {
+        entry.lidCache[lid] = barePn;
+        console.log(`[lid-mapping] Mapeado ${lid} → ${barePn}`);
+      }
+    }
+    saveLidCache(userId, entry.lidCache);
+  });
+
   // Resolver nombre de un jid usando contacts + lidCache (con salto lid→phone→name)
   function resolveName(jid) {
     if (!jid) return null;
@@ -393,19 +424,44 @@ async function createSession(userId) {
     } catch (_) {}
   }
 
-  sock.ev.on('messaging-history.set', ({ chats }) => {
+  sock.ev.on('messaging-history.set', ({ chats, lidPnMappings }) => {
+    // Procesar mapeos LID→PN del historial ANTES de los chats
+    if (lidPnMappings && Array.isArray(lidPnMappings)) {
+      for (const m of lidPnMappings) {
+        const lid = m.lid || m.id;
+        const pn = m.pn || m.phoneNumber;
+        if (lid && pn) {
+          const barePn = pn.replace('@s.whatsapp.net', '');
+          if (!entry.lidCache[lid]) {
+            entry.lidCache[lid] = barePn;
+            saveLidCache(userId, entry.lidCache);
+            console.log(`[history] Mapeo LID ${lid} → ${barePn} (del historial)`);
+          }
+        }
+      }
+    }
     console.log(`[history] Cargando ${chats.length} chats`);
     for (const chat of chats) {
       const normId = (chat.id.endsWith('@lid') && entry.lidCache[chat.id])
         ? entry.lidCache[chat.id] + '@s.whatsapp.net'
         : chat.id;
       if (normId !== chat.id) {
-        if (entry.chats.has(chat.id) && !entry.chats.has(normId)) {
-          entry.chats.set(normId, entry.chats.get(chat.id));
+        if (entry.chats.has(chat.id)) {
+          if (!entry.chats.has(normId)) {
+            entry.chats.set(normId, entry.chats.get(chat.id));
+          }
           entry.chats.delete(chat.id);
         }
-        if (entry.messages.has(chat.id) && !entry.messages.has(normId)) {
-          entry.messages.set(normId, entry.messages.get(chat.id));
+        if (entry.messages.has(chat.id)) {
+          if (entry.messages.has(normId)) {
+            const pnMsgs = entry.messages.get(normId);
+            for (const lm of entry.messages.get(chat.id)) {
+              if (!pnMsgs.find(m => m.id === lm.id)) pnMsgs.push(lm);
+            }
+            if (pnMsgs.length > 10) pnMsgs.splice(0, pnMsgs.length - 10);
+          } else {
+            entry.messages.set(normId, entry.messages.get(chat.id));
+          }
           entry.messages.delete(chat.id);
         }
       }
@@ -443,12 +499,22 @@ async function createSession(userId) {
         ? entry.lidCache[chatId] + '@s.whatsapp.net'
         : chatId;
       if (normId !== chatId) {
-        if (entry.chats.has(chatId) && !entry.chats.has(normId)) {
-          entry.chats.set(normId, entry.chats.get(chatId));
+        if (entry.chats.has(chatId)) {
+          if (!entry.chats.has(normId)) {
+            entry.chats.set(normId, entry.chats.get(chatId));
+          }
           entry.chats.delete(chatId);
         }
-        if (entry.messages.has(chatId) && !entry.messages.has(normId)) {
-          entry.messages.set(normId, entry.messages.get(chatId));
+        if (entry.messages.has(chatId)) {
+          if (entry.messages.has(normId)) {
+            const pnMsgs = entry.messages.get(normId);
+            for (const lm of entry.messages.get(chatId)) {
+              if (!pnMsgs.find(m => m.id === lm.id)) pnMsgs.push(lm);
+            }
+            if (pnMsgs.length > 10) pnMsgs.splice(0, pnMsgs.length - 10);
+          } else {
+            entry.messages.set(normId, entry.messages.get(chatId));
+          }
           entry.messages.delete(chatId);
         }
       }
