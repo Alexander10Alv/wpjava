@@ -126,7 +126,9 @@ router.post('/send', async (req, res) => {
     res.json({ ok: true, id: sent?.key?.id || null });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'No se pudo enviar el mensaje' });
+    saveOutbox(userId, jid, message);
+    console.log(`[send] Encolado tras error para ${jid}`);
+    res.json({ queued: true, message: 'Mensaje encolado tras error de envio' });
   }
 });
 
