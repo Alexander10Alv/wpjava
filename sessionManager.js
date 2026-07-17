@@ -86,7 +86,9 @@ function loadChatsCache(userId) {
     const dir = path.join(SESSIONS_DIR, userId);
     const chatsObj = JSON.parse(fs.readFileSync(path.join(dir, 'chats_cache.json'), 'utf8'));
     const msgsObj = JSON.parse(fs.readFileSync(path.join(dir, 'messages_cache.json'), 'utf8'));
-    const chats = new Map(Object.entries(chatsObj));
+    const chats = new Map(
+      Object.entries(chatsObj).map(([id, c]) => [id, { ...c, lastTimestamp: toMs(c.lastTimestamp) }])
+    );
     const messages = new Map(Object.entries(msgsObj));
     return { chats, messages };
   } catch (_) {
