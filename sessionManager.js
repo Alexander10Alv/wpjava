@@ -485,7 +485,7 @@ async function createSession(userId) {
       entry.chats.set(normId, {
         name,
         lastMessage: newLastMsg,
-        lastTimestamp: chat.conversationTimestamp || prev?.lastTimestamp || 0,
+        lastTimestamp: (chat.conversationTimestamp || 0) * 1000 || prev?.lastTimestamp || 0,
         unreadCount: prev?.unreadCount || 0,
       });
       if (chat.id.endsWith('@lid')) tryResolveLid(chat.id);
@@ -591,7 +591,7 @@ async function createSession(userId) {
       entry.chats.set(normId, {
         name: finalName,
         lastMessage: isImage ? '[imagen]' : isAudio ? '[audio]' : (text || ''),
-        lastTimestamp: msg.messageTimestamp,
+        lastTimestamp: (msg.messageTimestamp || 0) * 1000,
         unreadCount: newUnread,
       });
 
