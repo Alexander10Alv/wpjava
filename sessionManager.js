@@ -312,39 +312,30 @@ async function createSession(userId) {
 
   // Capturar contactos de la agenda cuando Baileys los sincroniza
   sock.ev.on('contacts.upsert', (contacts) => {
-    console.log(`[contacts] Recibidos ${contacts.length} contactos`);
     for (const c of contacts) {
       if (c.id) {
-        console.log(`[contacts] ID: ${c.id}, name: ${c.name}, notify: ${c.notify}, phoneNumber: ${c.phoneNumber}, lid: ${c.lid}`);
         entry.contacts[c.id] = c;
         
-        // v7: Contact tiene id (preferred), phoneNumber (si id es LID), lid (si id es PN)
         if (c.id.endsWith('@s.whatsapp.net') && c.lid) {
           lidCache[c.lid] = c.id.replace('@s.whatsapp.net', '');
-          console.log(`[contacts] Mapeado LID ${c.lid} -> ${lidCache[c.lid]}`);
           saveLidCache(userId, lidCache);
         } else if (c.id.endsWith('@lid') && c.phoneNumber) {
           lidCache[c.id] = c.phoneNumber.replace('@s.whatsapp.net', '');
-          console.log(`[contacts] Mapeado LID ${c.id} -> ${lidCache[c.id]}`);
           saveLidCache(userId, lidCache);
         }
         
-        // Actualizar nombre del chat si existe
         if (entry.chats.has(c.id)) {
           const chat = entry.chats.get(c.id);
           const newName = c.name || c.notify || chat.name;
-          console.log(`[contacts] Actualizando chat ${c.id}: "${chat.name}" -> "${newName}"`);
           if (newName && newName !== chat.name) {
             chat.name = newName;
             saveChatsCache(userId, entry.chats, entry.messages);
           }
         }
         
-        // También actualizar si el chat existe por LID
         if (c.lid && entry.chats.has(c.lid)) {
           const chat = entry.chats.get(c.lid);
           const newName = c.name || c.notify || chat.name;
-          console.log(`[contacts] Actualizando chat LID ${c.lid}: "${chat.name}" -> "${newName}"`);
           if (newName && newName !== chat.name) {
             chat.name = newName;
             saveChatsCache(userId, entry.chats, entry.messages);
@@ -357,12 +348,10 @@ async function createSession(userId) {
   // Escuchar mapeos LID→PN que Baileys descubra dinámicamente
   sock.ev.on('lid-mapping.update', (mappings) => {
     if (!mappings) return;
-    console.log('[lid-mapping] Recibido update:', Object.keys(mappings).length, 'mapeos');
     for (const [lid, pn] of Object.entries(mappings)) {
       const barePn = pn.replace('@s.whatsapp.net', '');
       if (!entry.lidCache[lid]) {
         entry.lidCache[lid] = barePn;
-        console.log(`[lid-mapping] Mapeado ${lid} → ${barePn}`);
       }
     }
     saveLidCache(userId, entry.lidCache);
@@ -440,7 +429,7 @@ async function createSession(userId) {
         }
       }
     }
-    console.log(`[history] Cargando ${chats.length} chats`);
+    console.log(`[history] ${chats.length} chats recibidos`);
     for (const chat of chats) {
       const normId = (chat.id.endsWith('@lid') && entry.lidCache[chat.id])
         ? entry.lidCache[chat.id] + '@s.whatsapp.net'
@@ -477,10 +466,10 @@ async function createSession(userId) {
       } else {
         name = 'No conocido';
       }
-      console.log(`[history] Chat ${normId}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
-      const newLastMsg = prev?.lastMessage || '';
-      const newTimestamp = Math.max((chat.conversationTimestamp || 0) * 1000, prev?.lastTimestamp || 0);
-      console.log(`[debug2] Chat ${normId} history: convTs=${chat.conversationTimestamp} prevTs=${prev?.lastTimestamp} newTs=${newTimestamp} lastMsg="${newLastMsg}" prevExisted=${!!prev}`);
+      console.log(`[history] Chat ${normId}: name="${name}", ts=${newTimestamp}, lastMsg="${newLastMsg}" (convTs=${chat.conversationTimestamp})`);
+      entry.chats.set(normId, {  const newLastMsg = prev?.lastMessage || '';
+      const newTimestamp = prev?.lastTimestamp || (chat.conversationTimestamp || 0) * 1000 || 0;
+      console.log(`[history] Chat ${normId}: name="${name}", ts=${newTimestamp}, lastMsg="${newLastMsg}" (convTs=${chat.conversationTimestamp})`);
       entry.chats.set(normId, {
         name,
         lastMessage: newLastMsg,
@@ -522,7 +511,7 @@ async function createSession(userId) {
         }
       }
 
-      console.log('[msg]', msg.key.id, 'keys:', Object.keys(msg.message || {}).join(','), 'chatId:', chatId, '-> normId:', normId, 'fromMe:', msg.key.fromMe);
+      console.log('[msg] nuevo:', normId, 'fromMe:', msg.key.fromMe, 'text:', text?.substring(0, 30));
 
       // Ignorar solo mensajes completamente vacios (sin message object)
       if (!msg.message) continue;
@@ -567,8 +556,6 @@ async function createSession(userId) {
       const prevUnread = prevChat.unreadCount || 0;
       const finalLast = isImage ? '[imagen]' : isAudio ? '[audio]' : (text || '');
       const msgTs = (msg.messageTimestamp || 0) * 1000;
-      const prevTs = prevChat.lastTimestamp || 0;
-      console.log(`[debug2] Chat ${normId} msgTs=${msgTs} prevTs=${prevTs} lastMessage: "${prevChat.lastMessage || ''}" -> "${finalLast}" (isImage:${isImage} isAudio:${isAudio} fromMe:${msg.key.fromMe})`);
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
       // Lógica de nombre:
@@ -587,7 +574,7 @@ async function createSession(userId) {
         finalName = 'No conocido';
       }
 
-      console.log(`[msg] Chat ${normId} name: "${finalName}" (prevName: "${prevChat.name}", pushName: "${msg.pushName}", contact: "${resolveName(normId)}")`);
+      console.log(`[msg] Chat actualizado: ${normId}, name="${finalName}", lastMsg="${finalLast}", ts=${msgTs}`);
 
       entry.chats.set(normId, {
         name: finalName,
@@ -682,14 +669,13 @@ function cleanupInactive(days) {
 
 // Restaurar sesiones existentes al iniciar el servidor
 async function restoreSessions() {
-  console.log('[restore] Iniciando restauracion...');
+  console.log('[restore] Iniciando...');
   if (!fs.existsSync(SESSIONS_DIR)) {
-    console.log('[restore] Directorio de sesiones no existe, creando...');
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
     return;
   }
   const dirs = fs.readdirSync(SESSIONS_DIR);
-  console.log(`[restore] Encontradas ${dirs.length} sesiones en disco`);
+  console.log(`[restore] ${dirs.length} sesiones en disco`);
   
   for (const userId of dirs) {
     const userDir = path.join(SESSIONS_DIR, userId);
@@ -697,11 +683,9 @@ async function restoreSessions() {
       const stat = fs.statSync(userDir);
       if (!stat.isDirectory()) continue;
       
-      // Verificar que tenga credenciales de Baileys
       const credsPath = path.join(userDir, 'creds.json');
       if (!fs.existsSync(credsPath)) continue;
       
-      // Verificar que tenga meta.json con accessCode
       const meta = loadMeta(userId);
       if (!meta.accessCode) continue;
       

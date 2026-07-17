@@ -34,6 +34,11 @@ router.get('/status/:userId', (req, res) => {
   });
 });
 
+// J2ME no soporta emojis ni chars fuera de Latin-1 — limpiar nombres
+function sanitizeForJ2ME(name) {
+  return name ? name.replace(/[^\x20-\xFF]/g, '').trim() : name;
+}
+
 function auth(req, res, next) {
   const { userId } = req.params;
   const code = req.query.code || req.headers['x-access-code'];
@@ -50,9 +55,8 @@ router.get('/chats/:userId', auth, (req, res) => {
     .map(([id, c]) => ({ id, ...c, unreadCount: c.unreadCount || 0 }))
     .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
   const bodyStr = JSON.stringify({ chats });
-  const vacios = chats.filter(c => !c.lastMessage).length;
-  console.log('[chats] Devolviendo', chats.length, 'chats:', chats.map(c => ({ id: c.id, name: c.name, lastMsg: c.lastMessage })));
-  console.log(`[debug3] GET /chats: ${chats.length} chats, ${Buffer.byteLength(bodyStr)} bytes, vacios: ${vacios}`);
+  console.log(`[chats] Total: ${chats.length}, bytes: ${Buffer.byteLength(bodyStr)}`);
+  console.log(`[chats] Top 25 (lo que ve el Nokia):`, chats.slice(0, 25).map((c, i) => ({ pos: i+1, id: c.id, name: c.name, lastMsg: c.lastMessage, ts: c.lastTimestamp })));
   res.json({ chats });
 });
 
@@ -82,33 +86,24 @@ router.get('/messages/:userId/:chatId', auth, (req, res) => {
     normChatId = session.lidCache[normChatId] + '@s.whatsapp.net';
   }
   const all = session.messages.get(normChatId) || [];
-  console.log('[messages] Solicitado rawChatId:', rawChatId, '-> normChatId:', normChatId, 'total msgs:', all.length);
+  console.log('[messages] chatId:', normChatId, 'total en memoria:', all.length);
   const page = parseInt(req.query.page || '0', 10);
   const pageSize = 10;
   const start = Math.max(all.length - pageSize * (page + 1), 0);
   const end = all.length - pageSize * page;
   const messages = all.slice(start, end).map(({ raw, ...m }) => m);
-  console.log('[messages] Devolviendo page', page, 'slice', start, '-', end, '=', messages.length, 'mensajes');
+  console.log('[messages] Devolviendo', messages.length, 'msgs para', normChatId);
   res.json({ messages, hasMore: start > 0 });
 });
 
 router.post('/send', async (req, res) => {
-  console.log('[send] body:', JSON.stringify(req.body));
-  console.log('[send] headers content-type:', req.headers['content-type']);
-
   const { userId, code, chatId, message } = req.body || {};
-
-  console.log('[send] userId:', userId);
-  console.log('[send] code:', code);
-  console.log('[send] chatId:', chatId);
 
   if (!userId || !chatId || !message) {
     return res.status(400).json({ error: 'Faltan campos: userId, chatId, message' });
   }
   if (!checkAccess(userId, code)) {
-    console.log('[send] 401 - checkAccess falló');
-    const session = getSession(userId);
-    console.log('[send] accessCode esperado:', session?.accessCode);
+    console.log('[send] 401 - checkAccess falló, userId:', userId);
     return res.status(401).json({ error: 'Codigo de acceso invalido' });
   }
   const session = getSession(userId);
@@ -143,7 +138,7 @@ router.post('/send', async (req, res) => {
     } catch (_) {}
     console.log('[send] Enviando a jid:', jid);
     const sent = await session.sock.sendMessage(jid, { text: message });
-    console.log('[send] sendMessage OK, sent.key:', JSON.stringify(sent?.key));
+    console.log('[send] OK, id:', sent?.key?.id);
 
     // Agregar mensaje a la lista inmediatamente (no esperar messages.upsert)
     const msgEntry = {
@@ -167,8 +162,7 @@ router.post('/send', async (req, res) => {
       chat.lastTimestamp = msgEntry.timestamp * 1000;
     }
 
-    console.log('[send] messages ahora tiene', session.messages.get(jid)?.length, 'mensajes para', jid);
-    console.log('[send] chat ahora es:', JSON.stringify(session.chats.get(jid)));
+    console.log('[send] messages ahora tiene', session.messages.get(jid)?.length, 'msgs para', jid);
 
     touch(userId);
     res.json({ ok: true, id: sent?.key?.id || null });
