@@ -479,13 +479,12 @@ async function createSession(userId) {
       }
       console.log(`[history] Chat ${normId}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
       const newLastMsg = prev?.lastMessage || '';
-      if (!newLastMsg) {
-        console.log(`[debug2] Chat ${normId} history lastMessage VACIO (prev existed: ${!!prev}, convTimestamp: ${chat.conversationTimestamp})`);
-      }
+      const newTimestamp = Math.max((chat.conversationTimestamp || 0) * 1000, prev?.lastTimestamp || 0);
+      console.log(`[debug2] Chat ${normId} history: convTs=${chat.conversationTimestamp} prevTs=${prev?.lastTimestamp} newTs=${newTimestamp} lastMsg="${newLastMsg}" prevExisted=${!!prev}`);
       entry.chats.set(normId, {
         name,
         lastMessage: newLastMsg,
-        lastTimestamp: (chat.conversationTimestamp || 0) * 1000 || prev?.lastTimestamp || 0,
+        lastTimestamp: newTimestamp,
         unreadCount: prev?.unreadCount || 0,
       });
       if (chat.id.endsWith('@lid')) tryResolveLid(chat.id);
@@ -567,7 +566,9 @@ async function createSession(userId) {
       const prevChat = entry.chats.get(normId) || {};
       const prevUnread = prevChat.unreadCount || 0;
       const finalLast = isImage ? '[imagen]' : isAudio ? '[audio]' : (text || '');
-      console.log(`[debug2] Chat ${normId} lastMessage: "${prevChat.lastMessage || ''}" -> "${finalLast}" (isImage:${isImage} isAudio:${isAudio} fromMe:${msg.key.fromMe})`);
+      const msgTs = (msg.messageTimestamp || 0) * 1000;
+      const prevTs = prevChat.lastTimestamp || 0;
+      console.log(`[debug2] Chat ${normId} msgTs=${msgTs} prevTs=${prevTs} lastMessage: "${prevChat.lastMessage || ''}" -> "${finalLast}" (isImage:${isImage} isAudio:${isAudio} fromMe:${msg.key.fromMe})`);
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
       // Lógica de nombre:
