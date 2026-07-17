@@ -18,6 +18,19 @@ function genAccessCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Convierte timestamp protobuf ({ low, high, unsigned }) o número a milliseconds
+function toMs(ts) {
+  if (!ts) return 0;
+  if (typeof ts === 'object' && 'low' in ts) {
+    // Long protobuf: reconstruir como número de 64 bits (low es unsigned)
+    const val = (ts.high >>> 0) * 4294967296 + (ts.low >>> 0);
+    return val * 1000;
+  }
+  const n = Number(ts);
+  // Si ya viene en ms (>1e12) no multiplicar
+  return n > 1e12 ? n : n * 1000;
+}
+
 function cleanId(jid) {
   if (!jid) return jid;
   if (jid.endsWith('@s.whatsapp.net')) return '+' + jid.replace('@s.whatsapp.net', '');
@@ -467,8 +480,9 @@ async function createSession(userId) {
         name = 'No conocido';
       }
       const newLastMsg = prev?.lastMessage || '';
-      const newTimestamp = prev?.lastTimestamp || (chat.conversationTimestamp || 0) * 1000 || 0;
-      console.log(`[history] Chat ${normId}: name="${name}", ts=${newTimestamp}, lastMsg="${newLastMsg}" (convTs=${chat.conversationTimestamp})`);
+      const rawTs = chat.conversationTimestamp;
+      const newTimestamp = prev?.lastTimestamp || toMs(rawTs);
+      console.log(`[history] Chat ${normId}: name="${name}", ts=${newTimestamp}, rawTs=${JSON.stringify(rawTs)}, lastMsg="${newLastMsg}"`);
       entry.chats.set(normId, {
         name,
         lastMessage: newLastMsg,
@@ -540,7 +554,7 @@ async function createSession(userId) {
         fromMe: !!msg.key.fromMe,
         text: isImage ? '[imagen]' : isAudio ? '[audio]' : text,
         type: isImage ? 'image' : isAudio ? 'audio' : 'text',
-        timestamp: msg.messageTimestamp,
+        timestamp: toMs(msg.messageTimestamp) / 1000,
         pushName: msg.pushName || null,
         raw: (isImage || isAudio) ? msg : undefined,
       };
@@ -558,7 +572,7 @@ async function createSession(userId) {
       const prevChat = entry.chats.get(normId) || {};
       const prevUnread = prevChat.unreadCount || 0;
       const finalLast = isImage ? '[imagen]' : isAudio ? '[audio]' : (text || '');
-      const msgTs = (msg.messageTimestamp || 0) * 1000;
+      const msgTs = toMs(msg.messageTimestamp);
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
       // Lógica de nombre:
@@ -582,7 +596,7 @@ async function createSession(userId) {
       entry.chats.set(normId, {
         name: finalName,
         lastMessage: isImage ? '[imagen]' : isAudio ? '[audio]' : (text || ''),
-        lastTimestamp: (msg.messageTimestamp || 0) * 1000,
+        lastTimestamp: toMs(msg.messageTimestamp),
         unreadCount: newUnread,
       });
 
@@ -611,7 +625,7 @@ async function createSession(userId) {
         fromMe: !!msg.key.fromMe,
         text: isImage ? '[imagen]' : isAudio ? '[audio]' : text,
         type: isImage ? 'image' : isAudio ? 'audio' : 'text',
-        timestamp: msg.messageTimestamp,
+        timestamp: toMs(msg.messageTimestamp) / 1000,
         pushName: msg.pushName || null,
         raw: (isImage || isAudio) ? msg : undefined,
       };
