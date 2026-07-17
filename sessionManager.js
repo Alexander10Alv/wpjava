@@ -510,7 +510,8 @@ async function createSession(userId) {
         }
       }
 
-      console.log('[msg] nuevo:', normId, 'fromMe:', msg.key.fromMe, 'text:', text?.substring(0, 30));
+      // Log de todo lo que llega, antes de cualquier filtro
+      console.log('[msg] raw:', normId, 'fromMe:', msg.key.fromMe, 'keys:', Object.keys(msg.message || {}).join(','), 'pushName:', msg.pushName);
 
       // Ignorar solo mensajes completamente vacios (sin message object)
       if (!msg.message) continue;
@@ -524,7 +525,10 @@ async function createSession(userId) {
       const isAudio = !!msg.message?.audioMessage;
 
       // Ignorar reacciones y mensajes de protocolo que no tienen contenido visible
-      if (msg.message?.reactionMessage || msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+      if (msg.message?.reactionMessage || msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) {
+        console.log('[msg] ignorado (protocolo/reaccion):', normId);
+        continue;
+      }
 
       if (!entry.messages.has(normId)) entry.messages.set(normId, []);
       // Evitar duplicados por id
