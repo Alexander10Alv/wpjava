@@ -466,8 +466,7 @@ async function createSession(userId) {
       } else {
         name = 'No conocido';
       }
-      console.log(`[history] Chat ${normId}: name="${name}", ts=${newTimestamp}, lastMsg="${newLastMsg}" (convTs=${chat.conversationTimestamp})`);
-      entry.chats.set(normId, {  const newLastMsg = prev?.lastMessage || '';
+      const newLastMsg = prev?.lastMessage || '';
       const newTimestamp = prev?.lastTimestamp || (chat.conversationTimestamp || 0) * 1000 || 0;
       console.log(`[history] Chat ${normId}: name="${name}", ts=${newTimestamp}, lastMsg="${newLastMsg}" (convTs=${chat.conversationTimestamp})`);
       entry.chats.set(normId, {
