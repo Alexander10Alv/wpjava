@@ -49,7 +49,10 @@ router.get('/chats/:userId', auth, (req, res) => {
   const chats = [...session.chats.entries()]
     .map(([id, c]) => ({ id, ...c, unreadCount: c.unreadCount || 0 }))
     .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+  const bodyStr = JSON.stringify({ chats });
+  const vacios = chats.filter(c => !c.lastMessage).length;
   console.log('[chats] Devolviendo', chats.length, 'chats:', chats.map(c => ({ id: c.id, name: c.name, lastMsg: c.lastMessage })));
+  console.log(`[debug3] GET /chats: ${chats.length} chats, ${Buffer.byteLength(bodyStr)} bytes, vacios: ${vacios}`);
   res.json({ chats });
 });
 

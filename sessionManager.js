@@ -478,9 +478,13 @@ async function createSession(userId) {
         name = 'No conocido';
       }
       console.log(`[history] Chat ${normId}: name="${name}" (contact: ${contactName}, chat.name: ${chat.name})`);
+      const newLastMsg = prev?.lastMessage || '';
+      if (!newLastMsg) {
+        console.log(`[debug2] Chat ${normId} history lastMessage VACIO (prev existed: ${!!prev}, convTimestamp: ${chat.conversationTimestamp})`);
+      }
       entry.chats.set(normId, {
         name,
-        lastMessage: prev?.lastMessage || '',
+        lastMessage: newLastMsg,
         lastTimestamp: chat.conversationTimestamp || prev?.lastTimestamp || 0,
         unreadCount: prev?.unreadCount || 0,
       });
@@ -562,6 +566,8 @@ async function createSession(userId) {
       const agendaName = resolveName(normId);
       const prevChat = entry.chats.get(normId) || {};
       const prevUnread = prevChat.unreadCount || 0;
+      const finalLast = isImage ? '[imagen]' : isAudio ? '[audio]' : (text || '');
+      console.log(`[debug2] Chat ${normId} lastMessage: "${prevChat.lastMessage || ''}" -> "${finalLast}" (isImage:${isImage} isAudio:${isAudio} fromMe:${msg.key.fromMe})`);
       const newUnread = msg.key.fromMe ? prevUnread : prevUnread + 1;
 
       // Lógica de nombre:
