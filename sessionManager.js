@@ -12,7 +12,7 @@ async function B() {
 
 const SESSIONS_DIR = process.env.SESSIONS_DIR || '/app/sessions';
 const DATA_DIR = process.env.DATA_DIR || '/app/data';
-const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '21', 10);
+const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '48', 10);
 
 const sessions = new Map();
 
