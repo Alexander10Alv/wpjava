@@ -81,28 +81,28 @@ function init(checkAccessFn) {
 
     function startPing() {
       pingInterval = setInterval(() => {
-        if (!send(socket, { type: 'ping' })) { cleanup(); return; }
+        if (!send(socket, { type: 'ping' })) { cleanup('send_failed'); return; }
         // Si no recibimos pong en 15s, cerrar
         pongTimeout = setTimeout(() => {
           console.log(`[tcp] Timeout pong para ${userId}, cerrando`);
-          cleanup();
+          cleanup('pong_timeout');
         }, 15000);
       }, 30000);
     }
 
-    function cleanup() {
+    function cleanup(reason) {
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
       if (pongTimeout)  { clearTimeout(pongTimeout);  pongTimeout  = null; }
       if (userId && clients.get(userId) === socket) {
         clients.delete(userId);
-        console.log(`[tcp] Cliente desconectado: ${userId}`);
+        console.log(`[tcp] Disconnect userId=${userId} reason=${reason || 'unknown'}`);
       }
       try { socket.destroy(); } catch (_) {}
     }
 
-    socket.on('error', () => cleanup());
-    socket.on('close', () => cleanup());
-    socket.on('end', () => cleanup());
+    socket.on('error', (err) => cleanup('error_' + (err.code || err.message)));
+    socket.on('close', (hadError) => cleanup(hadError ? 'close_hadError' : 'close'));
+    socket.on('end', () => cleanup('end'));
   });
 
   server.listen(TCP_PORT, '0.0.0.0', () => {
