@@ -87,7 +87,7 @@ function init(checkAccessFn) {
           console.log(`[tcp] Timeout pong para ${userId}, cerrando`);
           cleanup('pong_timeout');
         }, 15000);
-      }, 30000);
+      }, 5000);
     }
 
     function cleanup(reason) {
