@@ -61,12 +61,12 @@ async function dbUpsertChat(userId, chatId, name, lastMessage, lastTimestamp, un
 async function dbInsertMessage(userId, chatId, msgEntry) {
   try {
     await db.query(
-      `INSERT IGNORE INTO messages (userId, chatId, messageId, fromMe, text, type, timestamp, pushName, ack, quoted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT IGNORE INTO messages (userId, chatId, messageId, fromMe, text, type, timestamp, pushName, ack, quoted, duration)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [userId, chatId, msgEntry.id, msgEntry.fromMe ? 1 : 0,
        msgEntry.text || '', msgEntry.type || 'text',
        msgEntry.timestamp || 0, msgEntry.pushName || null, msgEntry.ack || 0,
-       msgEntry.quotedText || null]
+       msgEntry.quotedText || null, msgEntry.duration || 0]
     );
   } catch (_) {}
 }
@@ -689,6 +689,7 @@ async function createSession(userId) {
         msgId: msgEntry.id,
         quoted: msgEntry.quotedText || null,
         sender: (typeof msgEntry.pushName === 'string' ? msgEntry.pushName.replace(/[^\x20-\xFF]/g, '').trim() : msgEntry.pushName),
+        duration: msgEntry.duration || 0,
       });
       // Push TCP: actualizar la lista de chats
       tcpServer.push(userId, {

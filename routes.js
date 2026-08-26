@@ -216,7 +216,7 @@ router.get('/messages/:userId/:chatId', auth, async (req, res) => {
     const offset = Math.max(0, total - pageSize * (page + 1));
     const limit = Math.min(pageSize, total - pageSize * page);
     const messages = await db.query(
-      `SELECT messageId AS id, fromMe, text, type, timestamp, pushName, ack, quoted
+      `SELECT messageId AS id, fromMe, text, type, timestamp, pushName, ack, quoted, duration
        FROM messages WHERE userId=? AND chatId=?
        ORDER BY timestamp ASC LIMIT ? OFFSET ?`,
       [req.params.userId, normChatId, limit, offset]
@@ -638,9 +638,9 @@ router.post('/sendaudio/:userId', async (req, res) => {
 
       // Guardar en DB
       await db.query(
-        `INSERT IGNORE INTO messages (userId, chatId, messageId, fromMe, text, type, timestamp)
-         VALUES (?, ?, ?, 1, '[audio]', 'audio', ?)`,
-        [userId, jid, msgId, ts]
+        `INSERT IGNORE INTO messages (userId, chatId, messageId, fromMe, text, type, timestamp, duration)
+         VALUES (?, ?, ?, 1, '[audio]', 'audio', ?, ?)`,
+        [userId, jid, msgId, ts, durationSec || 0]
       );
       await db.query(
         `UPDATE chats SET lastMessage='[audio]', lastTimestamp=? WHERE userId=? AND chatId=?`,
