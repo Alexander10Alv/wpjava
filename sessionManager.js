@@ -415,6 +415,17 @@ async function createSession(userId) {
               [newName, userId, c.lid, cleanId(c.lid)]).catch(() => {});
           }
         }
+
+        // Guardar respaldo de contactos en DB para fallback tras reconexión
+        if (c.id.endsWith('@s.whatsapp.net') && newName) {
+          const phone = c.id.replace('@s.whatsapp.net', '');
+          db.query(
+            `INSERT INTO contacts (userId, contactId, name, phone)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone)`,
+            [userId, c.id, newName, phone]
+          ).catch(() => {});
+        }
       }
     }
   });
@@ -486,7 +497,7 @@ async function createSession(userId) {
     } catch (_) {}
   }
 
-  sock.ev.on('messaging-history.set', async ({ chats, lidPnMappings }) => {
+  sock.ev.on('messaging-history.set', async ({ chats, contacts, lidPnMappings }) => {
     // Procesar mapeos LID→PN del historial ANTES de los chats
     if (lidPnMappings && Array.isArray(lidPnMappings)) {
       for (const m of lidPnMappings) {
@@ -497,6 +508,24 @@ async function createSession(userId) {
           if (!entry.lidCache[lid]) {
             entry.lidCache[lid] = barePn;
             saveLidCache(userId, entry.lidCache);
+          }
+        }
+      }
+    }
+    // Poblar entry.contacts desde el bulk inicial (contacts.upsert solo llega con cambios individuales)
+    if (contacts && Array.isArray(contacts)) {
+      for (const c of contacts) {
+        if (c.id) {
+          entry.contacts[c.id] = c;
+          if (c.id.endsWith('@s.whatsapp.net') && (c.name || c.notify)) {
+            const phone = c.id.replace('@s.whatsapp.net', '');
+            const cname = c.name || c.notify;
+            db.query(
+              `INSERT INTO contacts (userId, contactId, name, phone)
+               VALUES (?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE name=VALUES(name), phone=VALUES(phone)`,
+              [userId, c.id, cname, phone]
+            ).catch(() => {});
           }
         }
       }
