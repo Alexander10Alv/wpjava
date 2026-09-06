@@ -16,6 +16,78 @@ const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || 
 
 const sessions = new Map();
 
+// === Pausa de emergencia de reconexion (mantenimiento manual) ===
+// Cuando se activa, los reintentos automaticos tras desconexion quedan
+// SUSPENDIDOS (no se programa setTimeout). No afecta /link (QR nuevo),
+// ni la lectura de sesiones. Se activa/apaga desde el deploy o la consola.
+let RECONNECT_PAUSED = false;
+function setReconnectPaused(v) {
+  RECONNECT_PAUSED = !!v;
+  // Al reactivar, reprogramar las sesiones que quedaron en 'reconnecting'
+  // durante la pausa para que retomen su backoff normal.
+  if (!RECONNECT_PAUSED) {
+    for (const [uid, entry] of sessions.entries()) {
+      if (entry.status === 'reconnecting') {
+        console.log(`[session] ${uid} reactivada tras pausa de emergencia`);
+        scheduleReconnect(uid, path.join(SESSIONS_DIR, uid));
+      }
+    }
+  }
+}
+function isReconnectPaused() { return RECONNECT_PAUSED; }
+
+// === Backoff exponencial de reconexion ===
+// Intentos fallidos consecutivos por usuario (sobrevive al recreate del entry).
+const retryCounters = new Map(); // userId -> { attempts, hasCreds }
+const RECONNECT_BACKOFF = [
+  3000, 6000, 12000, 24000,     // 3s, 6s, 12s, 24s
+  60000, 120000, 240000, 300000 // 1min, 2min, 4min, 5min (max normal)
+];
+const RECONNECT_MAX_ATTEMPTS = 20; // Caso A: desde aqui espacia a 30min. Caso B: muere.
+const RECONNECT_LONG_INTERVAL = 30 * 60 * 1000; // 30 min
+
+function scheduleReconnect(userId, userDir) {
+  if (isReconnectPaused()) {
+    console.log(`[session] ${userId} reconexion PAUSADA (modo emergencia)`);
+    return;
+  }
+
+  const counter = retryCounters.get(userId) || { attempts: 0, hasCreds: false };
+  counter.hasCreds = fs.existsSync(path.join(userDir, 'creds.json'));
+  retryCounters.set(userId, counter);
+  counter.attempts++;
+
+  // CASO B: sin creds.json (QR nunca escaneado, sin vínculo real).
+  // Tras el máximo de intentos, MUERE definitivamente: se limpia de
+  // memoria y disco, igual que cleanupInactive con carpetas huerfanas.
+  if (!counter.hasCreds && counter.attempts >= RECONNECT_MAX_ATTEMPTS) {
+    retryCounters.delete(userId);
+    sessions.delete(userId);
+    try { fs.rmSync(userDir, { recursive: true, force: true }); } catch (_) {}
+    console.log(`[session] ${userId} SIN creds.json: abandonado tras ${counter.attempts} intentos, carpeta eliminada`);
+    return;
+  }
+
+  // CASO A: con creds.json (usuario real), tras MAX_ATTEMPTS se espacia a 30min
+  // indefinidamente — NUNCA muere, el usuario no debe re-escanear QR.
+  let delay;
+  if (counter.hasCreds && counter.attempts >= RECONNECT_MAX_ATTEMPTS) {
+    delay = RECONNECT_LONG_INTERVAL;
+  } else {
+    const idx = Math.min(counter.attempts, RECONNECT_BACKOFF.length) - 1;
+    delay = RECONNECT_BACKOFF[Math.max(0, idx)];
+  }
+
+  console.log(`[session] ${userId} desconectado, reintento #${counter.attempts} en ${Math.round(delay / 1000)}s (creds=${counter.hasCreds})`);
+  setTimeout(() => {
+    sessions.delete(userId);
+    createSession(userId).catch((e) => {
+      console.error(`[session] ${userId} error en createSession, reprogramando:`, e.message);
+      scheduleReconnect(userId, userDir);
+    });
+  }, delay);
+}
+
 function genAccessCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
@@ -327,6 +399,8 @@ async function createSession(userId) {
     if (connection === 'open') {
       entry.status = 'connected';
       entry.qr = null;
+      // Reconexion exitosa: resetear el contador de reintentos
+      retryCounters.delete(userId);
       if (!entry.accessCode) {
         entry.accessCode = genAccessCode();
       }
@@ -372,6 +446,7 @@ async function createSession(userId) {
       console.log(`[link] error en disconnect:`, lastDisconnect?.error?.message || 'ninguno');
 
       if (loggedOut) {
+        retryCounters.delete(userId);
         sessions.delete(userId);
         fs.rmSync(userDir, { recursive: true, force: true });
         await dbDeleteSession(userId);
@@ -381,12 +456,7 @@ async function createSession(userId) {
           // Cerrar explicitamente el socket viejo para que Baileys no
           // reconecte en paralelo con el nuevo (evita sockets fantasma)
           try { sock.end(undefined); } catch (_) {}
-          console.log(`[link] Reintentando en 3s userId=${userId}`);
-          console.log(`[session] ${userId} desconectado, reintentando...`);
-          setTimeout(() => {
-            sessions.delete(userId);
-            createSession(userId).catch((e) => console.error('Error reconectando', e));
-          }, 3000);
+          scheduleReconnect(userId, userDir);
         }
     }
   });
@@ -803,13 +873,46 @@ function checkAccess(userId, code) {
 function cleanupInactive(days) {
   const limitMs = days * 24 * 60 * 60 * 1000;
   const now = Date.now();
+
+  // 1) Sesiones en memoria inactivas
   for (const [userId, entry] of sessions.entries()) {
     if (now - entry.lastActivity > limitMs) {
+      retryCounters.delete(userId);
       try { entry.sock.end(undefined); } catch (_) {}
       sessions.delete(userId);
       fs.rmSync(path.join(SESSIONS_DIR, userId), { recursive: true, force: true });
       console.log(`[cleanup] Sesion eliminada por inactividad: ${userId}`);
     }
+  }
+
+  // 2) Carpetas huerfanas en disco (sin sesion en memoria).
+  //    RestoreSessions solo carga carpetas con creds.json + meta.accessCode,
+  //    por eso las carpetas sin vínculo completo jamás entran a memoria
+  //    y antes quedaban acumulándose para siempre. Aquí se barren y se borran
+  //    si tienen mas de `days` de antiguedad.
+  if (!fs.existsSync(SESSIONS_DIR)) return;
+  const dirs = fs.readdirSync(SESSIONS_DIR);
+  for (const userId of dirs) {
+    if (sessions.has(userId)) continue;
+    const userDir = path.join(SESSIONS_DIR, userId);
+    try {
+      const stat = fs.statSync(userDir);
+      if (!stat.isDirectory()) continue;
+
+      const hasCreds = fs.existsSync(path.join(userDir, 'creds.json'));
+      const meta = loadMeta(userId);
+      // Carpeta de sesion REAL (vínculo WhatsApp completo). No es basura:
+      // si no está cargada en memoria se restaurara con restoreSessions
+      // en el proximo reinicio. Nunca se borra aqui.
+      if (hasCreds && meta.accessCode) continue;
+
+      // Carpeta sin vínculo completo: intento de link abandonado o QR sin escanear.
+      // Solo se borra si lleva mas de `days` sin ser tocada.
+      if (now - stat.mtimeMs > limitMs) {
+        fs.rmSync(userDir, { recursive: true, force: true });
+        console.log(`[cleanup] Carpeta huerfana eliminada (${userId}): sin vinculo completo y con mas de ${days} dias`);
+      }
+    } catch (_) {}
   }
 }
 
@@ -857,4 +960,6 @@ module.exports = {
   saveOutbox,
   cleanupMedia,
   MAX_CONCURRENT_SESSIONS,
+  setReconnectPaused,
+  isReconnectPaused,
 };

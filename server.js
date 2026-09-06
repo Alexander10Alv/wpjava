@@ -37,10 +37,12 @@ app.listen(PORT, '0.0.0.0', () => {
   restoreSessions().catch(err => console.error('[restore] Error:', err));
 });
 
-// Limpieza de sesiones inactivas cada 24 horas
+// Limpieza de sesiones inactivas: inmediatamente al arrancar y luego cada 6 horas
+// (antes solo cada 24h, dejaba acumularse las carpetas huerfanas un día entero)
 
 const INACTIVE_DAYS = parseInt(process.env.INACTIVE_SESSION_DAYS || '30', 10);
-setInterval(() => cleanupInactive(INACTIVE_DAYS), 24 * 60 * 60 * 1000);
+cleanupInactive(INACTIVE_DAYS);
+setInterval(() => cleanupInactive(INACTIVE_DAYS), 6 * 60 * 60 * 1000);
 
 // Limpieza de media: imagenes >3 dias, audios >5 dias — una vez al dia
 setInterval(() => cleanupMedia(3, 5), 24 * 60 * 60 * 1000);

@@ -6,6 +6,7 @@ const {
   checkAccess,
   touch,
   saveOutbox,
+  setReconnectPaused,
 } = require('./sessionManager');
 
 const fs = require('fs');
@@ -20,6 +21,30 @@ console.log('[VERIFICACION PATCH] chats.js tiene el parche aplicado:', tienePatc
 console.log('=====================================');
 
 const router = express.Router();
+
+// ============================================================
+// Emergencia: pausa/reactiva las reconexiones automaticas de Baileys
+// SIN reiniciar el proceso. Protegido por EMERGENCY_TOKEN en env.
+// Uso: GET /admin/pause?token=...&v=1   (v=1 pausa, v=0 reactiva)
+// Si EMERGENCY_TOKEN no esta definido, el endpoint esta deshabilitado.
+// ============================================================
+router.get('/admin/pause', (req, res) => {
+  const token = process.env.EMERGENCY_TOKEN;
+  if (!token) {
+    return res.status(503).json({ error: 'Emergency suspend deshabilitado (EMERGENCY_TOKEN no configurado)' });
+  }
+  const reqToken = req.query.token || '';
+  if (reqToken !== token) {
+    return res.status(403).json({ error: 'Token invalido' });
+  }
+  const v = req.query.v;
+  if (v !== '1' && v !== '0') {
+    return res.status(400).json({ error: 'Parametro v invalido (use v=1 para pausar, v=0 para reactivar)' });
+  }
+  setReconnectPaused(v === '1');
+  console.log(`[admin] Reconexiones ${v === '1' ? 'PAUSADAS' : 'REACTIVADAS'} manualmente`);
+  res.json({ ok: true, pausado: v === '1' });
+});
 
 router.post('/link', async (req, res) => {
   const userId = uuidv4();
