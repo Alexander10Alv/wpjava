@@ -7,6 +7,7 @@ const {
   touch,
   saveOutbox,
   setReconnectPaused,
+  sendWithTimeout,
 } = require('./sessionManager');
 
 const fs = require('fs');
@@ -301,7 +302,7 @@ router.post('/send', async (req, res) => {
       const [wa] = await session.sock.onWhatsApp(jid);
       if (wa?.exists && wa?.jid) jid = wa.jid;
     } catch (_) {}
-    const sent = await session.sock.sendMessage(jid, { text: message });
+    const sent = await sendWithTimeout(session.sock, jid, { text: message });
 
     const msgEntry = {
       id: sent?.key?.id || 'pending_' + Date.now(),
@@ -499,7 +500,7 @@ router.post('/sendimage/:userId', async (req, res) => {
       if (!jid.includes('@')) jid = jid.replace(/\D/g, '') + '@s.whatsapp.net';
       if (jid.endsWith('@lid') && session.lidCache?.[jid]) jid = session.lidCache[jid] + '@s.whatsapp.net';
       try { const [wa] = await session.sock.onWhatsApp(jid); if (wa?.exists && wa?.jid) jid = wa.jid; } catch (_) {}
-      const sent = await session.sock.sendMessage(jid, { image: imgBuffer, mimetype: 'image/jpeg' });
+      const sent = await sendWithTimeout(session.sock, jid, { image: imgBuffer, mimetype: 'image/jpeg' });
       const msgId = sent?.key?.id || ('img_' + Date.now());
       const ts = Math.floor(Date.now() / 1000);
       try {
@@ -541,7 +542,7 @@ router.post('/senddoc/:userId', async (req, res) => {
       if (!jid.includes('@')) jid = jid.replace(/\D/g, '') + '@s.whatsapp.net';
       if (jid.endsWith('@lid') && session.lidCache?.[jid]) jid = session.lidCache[jid] + '@s.whatsapp.net';
       try { const [wa] = await session.sock.onWhatsApp(jid); if (wa?.exists && wa?.jid) jid = wa.jid; } catch (_) {}
-      const sent = await session.sock.sendMessage(jid, {
+      const sent = await sendWithTimeout(session.sock, jid, {
         document: docBuffer,
         fileName: fileName,
         mimetype: 'application/octet-stream',
@@ -641,7 +642,7 @@ router.post('/sendaudio/:userId', async (req, res) => {
       console.log(`[sendaudio] tmpOgg existe antes de enviar: ${fs.existsSync(tmpOgg)}`);
 
       // Enviar audio como PTT (nota de voz) con OGG/Opus desde buffer directo
-      const sent = await session.sock.sendMessage(jid, {
+      const sent = await sendWithTimeout(session.sock, jid, {
         audio: oggBuffer,
         mimetype: 'audio/ogg; codecs=opus',
         ptt: true,

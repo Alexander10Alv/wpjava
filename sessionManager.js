@@ -10,6 +10,28 @@ async function B() {
   return _baileys;
 }
 
+// Fix C: sendMessage puede quedarse colgado sin resolver ni rechazar.
+// Este wrapper aplica timeout y loguea el error real para no quedar en silencio.
+const SEND_TIMEOUT_MS = parseInt(process.env.SEND_TIMEOUT_MS || '30000', 10);
+function sendWithTimeout(sock, jid, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error(`timeout tras ${SEND_TIMEOUT_MS}ms (socket colgado)`);
+      err.code = 'SEND_TIMEOUT';
+      console.error(`[sendMessage] TIMEOUT jid=${jid}: ${err.message}`);
+      reject(err);
+    }, SEND_TIMEOUT_MS);
+    sock.sendMessage(jid, message).then(
+      (sent) => { clearTimeout(timer); resolve(sent); },
+      (err) => {
+        clearTimeout(timer);
+        console.error(`[sendMessage] ERROR jid=${jid}: ${err?.message || err}`);
+        reject(err);
+      }
+    );
+  });
+}
+
 const SESSIONS_DIR = process.env.SESSIONS_DIR || '/app/sessions';
 const DATA_DIR = process.env.DATA_DIR || '/app/data';
 const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS || '48', 10);
@@ -292,10 +314,10 @@ async function processOutbox(userId, sock) {
         const [wa] = await sock.onWhatsApp(jid);
         if (wa?.exists && wa?.jid) jid = wa.jid;
       } catch (_) {}
-      await sock.sendMessage(jid, { text: item.message });
+      await sendWithTimeout(sock, jid, { text: item.message });
     } catch (e) {
       remaining.push({ ...item, retries: (item.retries || 0) + 1 });
-      console.log(`[outbox] Error con ${item.jid}, reintento ${(item.retries || 0) + 1}`);
+      console.log(`[outbox] Error con ${item.jid} (${e?.message || e}), reintento ${(item.retries || 0) + 1}`);
     }
   }
   try {
@@ -356,7 +378,17 @@ async function createSession(userId) {
   const baileys = await B();
   const { state, saveCreds } = await baileys.useMultiFileAuthState(userDir);
   console.log(`[link] Auth state cargado userId=${userId}, hay creds=${!!state.creds?.me}`);
-  const { version } = await baileys.fetchLatestWaWebVersion();
+  // Fix 405 (client_too_old): fetchLatestWaWebVersion falla/queda en la bundled vieja
+  // (2.3000.1035194821) si sw.js no responde. Guard: nunca usar por debajo del piso.
+  const WA_VERSION_FLOOR = [2, 3000, 1046920341]; // revision minima aceptada (2026-09)
+  let version = WA_VERSION_FLOOR;
+  try {
+    const v = await baileys.fetchLatestWaWebVersion();
+    if (v?.isLatest && v.version?.[2] >= WA_VERSION_FLOOR[2]) version = v.version;
+    else console.warn(`[link] WA version fallback sospechoso (${v?.version?.[2] ?? 'null'}), forzando piso ${WA_VERSION_FLOOR[2]}`);
+  } catch (e) {
+    console.warn(`[link] fetchLatestWaWebVersion error (${e.message}), usando piso ${WA_VERSION_FLOOR[2]}`);
+  }
   console.log(`[link] Version WA: ${version.join('.')}`);
   const sock = baileys.default({
     version,
@@ -962,4 +994,5 @@ module.exports = {
   MAX_CONCURRENT_SESSIONS,
   setReconnectPaused,
   isReconnectPaused,
+  sendWithTimeout,
 };
